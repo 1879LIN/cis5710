@@ -341,77 +341,6 @@ async def dhrystone(dut):
             return
         pass
     raise SimTimeoutError()
-
-<<<<<<< HEAD
-# RV_TEST_BINARIES = [
-#     RISCV_TESTS_PATH / 'rv32ui-p-simple', # 1
-#     RISCV_TESTS_PATH / 'rv32ui-p-lui',
-    
-#     RISCV_TESTS_PATH / 'rv32ui-p-and', # 3
-#     RISCV_TESTS_PATH / 'rv32ui-p-or',
-#     RISCV_TESTS_PATH / 'rv32ui-p-xor',
-#     RISCV_TESTS_PATH / 'rv32ui-p-sll',
-#     RISCV_TESTS_PATH / 'rv32ui-p-sra',
-#     RISCV_TESTS_PATH / 'rv32ui-p-srl',
-#     RISCV_TESTS_PATH / 'rv32ui-p-slt',
-#     RISCV_TESTS_PATH / 'rv32ui-p-add',
-#     RISCV_TESTS_PATH / 'rv32ui-p-sub',
-    
-#     RISCV_TESTS_PATH / 'rv32ui-p-andi', # 12
-#     RISCV_TESTS_PATH / 'rv32ui-p-ori',
-#     RISCV_TESTS_PATH / 'rv32ui-p-slli',
-#     RISCV_TESTS_PATH / 'rv32ui-p-srai',
-#     RISCV_TESTS_PATH / 'rv32ui-p-srli',
-#     RISCV_TESTS_PATH / 'rv32ui-p-xori',
-#     RISCV_TESTS_PATH / 'rv32ui-p-slti',
-#     RISCV_TESTS_PATH / 'rv32ui-p-sltiu',
-#     RISCV_TESTS_PATH / 'rv32ui-p-sltu',
-#     RISCV_TESTS_PATH / 'rv32ui-p-addi',
-    
-#     RISCV_TESTS_PATH / 'rv32ui-p-beq', # 22
-#     RISCV_TESTS_PATH / 'rv32ui-p-bge',
-#     RISCV_TESTS_PATH / 'rv32ui-p-bgeu',
-#     RISCV_TESTS_PATH / 'rv32ui-p-blt',
-#     RISCV_TESTS_PATH / 'rv32ui-p-bltu',
-#     RISCV_TESTS_PATH / 'rv32ui-p-bne',
-
-#     RISCV_TESTS_PATH / 'rv32ui-p-jal', # 28
-#     RISCV_TESTS_PATH / 'rv32ui-p-jalr',
-#     RISCV_TESTS_PATH / 'rv32ui-p-auipc', # needs JAL
-
-#     RISCV_TESTS_PATH / 'rv32ui-p-lb', # 31
-#     RISCV_TESTS_PATH / 'rv32ui-p-lbu',
-#     RISCV_TESTS_PATH / 'rv32ui-p-lh',
-#     RISCV_TESTS_PATH / 'rv32ui-p-lhu',
-#     RISCV_TESTS_PATH / 'rv32ui-p-lw',
-    
-#     RISCV_TESTS_PATH / 'rv32ui-p-sb', # 36
-#     RISCV_TESTS_PATH / 'rv32ui-p-sh',
-#     RISCV_TESTS_PATH / 'rv32ui-p-sw',
-
-#     # self-modifying code and fence.i insn
-#     RISCV_TESTS_PATH / 'rv32ui-p-fence_i', # 39
-
-#     RISCV_TESTS_PATH / 'rv32um-p-mul', # 40
-#     RISCV_TESTS_PATH / 'rv32um-p-mulh',
-#     RISCV_TESTS_PATH / 'rv32um-p-mulhsu',
-#     RISCV_TESTS_PATH / 'rv32um-p-mulhu',
-#     RISCV_TESTS_PATH / 'rv32um-p-div', # 44
-#     RISCV_TESTS_PATH / 'rv32um-p-divu',
-#     RISCV_TESTS_PATH / 'rv32um-p-rem',
-#     RISCV_TESTS_PATH / 'rv32um-p-remu',
-
-#     # misaligned accesses, we don't support these
-#     #RISCV_TESTS_PATH / 'rv32ui-p-ma_data',
-# ]
-
-# rvTestFactory = TestFactory(test_function=riscvTest)
-# if 'RVTEST_ALUBR' in os.environ:
-#     RV_TEST_BINARIES = RV_TEST_BINARIES[:27]
-#     pass
-# rvTestFactory.add_option(name='binaryPath', optionlist=RV_TEST_BINARIES)
-# rvTestFactory.generate_tests()
-=======
 RV_TEST_BINARIES = [
     RISCV_TESTS_PATH / 'rv32ui-p-simple', # 1
     RISCV_TESTS_PATH / 'rv32ui-p-lui',
@@ -480,4 +409,3 @@ if 'RVTEST_ALUBR' in os.environ:
     pass
 rvTestFactory.add_option(name='binaryPath', optionlist=RV_TEST_BINARIES)
 rvTestFactory.generate_tests()
->>>>>>> f06f4276a0c7544fc3e77a7848035f455b66e27d

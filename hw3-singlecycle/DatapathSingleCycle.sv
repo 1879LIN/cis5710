@@ -7,7 +7,7 @@
 `define OPCODE_SIZE 6:0
 
 `include "../hw2a/divider_unsigned.sv"
-`include "/home/penn/hw/hw/hw2b/cla.sv"
+`include "../hw2b/cla.sv"
 
 module RegFile (
     input logic [4:0] rd,

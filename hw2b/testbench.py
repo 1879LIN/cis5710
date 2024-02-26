@@ -124,6 +124,7 @@ async def test_overflow1(dut):
     await Timer(1, "ns")
     assert 0 == dut.sum.value
 
+
 @cocotb.test()
 async def test_random1k(dut):
     for i in range(1000):

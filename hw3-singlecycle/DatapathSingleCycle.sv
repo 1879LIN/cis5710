@@ -211,6 +211,7 @@ module DatapathSingleCycle (
   logic [31:0] rd_data_signal;
   logic [31:0] rs1,rs2,address_load;
   logic we_signal;
+  logic [63:0] mul_1,mul_2,mul_3,mul_4;
   logic [31:0] dividend, divisor,remainder,quotient;
 
   always_comb begin
@@ -410,14 +411,14 @@ module DatapathSingleCycle (
 
     
 
-    OpJal : begin                    
+    if(insn_jal) begin                    
         rd_data_signal = pcCurrent + 'd4;
 
         pcNext = pcCurrent + imm_j_sext;
         we_signal = 1'b1;
       end
 
-      OpJalr : begin                    
+    if(insn_jalr )begin                    
         rd_data_signal = pcCurrent + 'd4;
        
         pcNext = (rs1 + imm_i_sext) & ~(32'h00000001);
@@ -469,19 +470,36 @@ module DatapathSingleCycle (
     end
 
     if(insn_mul) begin
-      rd_data_signal = (rs1 * rs2) [31:0];
+     
+      mul_1 = (rs1 * rs2);
+      rd_data_signal = mul_1[31:0];
+      we_signal = 1'b1;
     end
 
     if(insn_mulh) begin
-      rd_data_signal = ($signed(rs1) * $signed(rs2)) [63:32]
+      // mul_2 = ($signed(rs1) * $signed(rs2));
+      // rd_data_signal = mul_2[63:32];
+      mul_2= {{32{rs1[31]}}, rs1} * {{32{rs2[31]}}, rs2};
+      rd_data_signal = mul_2[63:32];
+      we_signal = 1'b1;
+
     end
 
     if(insn_mulhsu) begin
-      rd_data_signal = ($signed(rs1) * $unsigned(rs2)) [63:32]
+      // mul_3 = ($signed(rs1) * $unsigned(rs2));
+      // rd_data_signal = mul_3[63:32];
+      mul_3 = {{32{rs1[31]}}, rs1} * {32'b0, rs2};
+      rd_data_signal = mul_3[63:32];
+      we_signal = 1'b1;
+
     end
 
     if(insn_mulhu) begin
-      rd_data_signal = ($unsigned(rs1) * $unsigned(rs2)) [63:32]
+      // mul_4 = ($unsigned(rs1) * $unsigned(rs2));
+      // rd_data_signal = mul_4[63:32];
+      mul_4 = rs1 * rs2;
+      rd_data_signal = mul_4[63:32];
+      we_signal = 1'b1;
 
     end
 
@@ -489,24 +507,31 @@ module DatapathSingleCycle (
       dividend = rs1;
       divisor = $signed(rs2);
       rd_data_signal = quotient;
+      we_signal = 1'b1;
+
     end
 
     if(insn_divu) begin
       dividend = rs1;
       divisor = $unsigned(rs2);
       rd_data_signal = quotient;
+      we_signal = 1'b1;
+
     end
 
     if (insn_rem) begin
       dividend = rs1;
       divisor = $signed(rs2);
       rd_data_signal = remainder;
+      we_signal = 1'b1;
+
     end
 
     if (insn_rem) begin
       dividend = rs1;
       divisor = $unsigned(rs2);
       rd_data_signal = remainder;
+      we_signal = 1'b1;
     end
 
   end

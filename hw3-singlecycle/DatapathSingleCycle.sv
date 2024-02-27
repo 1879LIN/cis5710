@@ -221,8 +221,14 @@ module DatapathSingleCycle (
     a_cla = 32'h000000000;
     b_cla = 32'h000000000;
     rd_data_signal = 32'h000000000;
-   
-
+    mul_1 = 64'h000000000;
+    mul_2 = 64'h000000000;
+    mul_3 = 64'h000000000;
+    mul_4 = 64'h000000000;
+    divisor = 32'h000000000;
+    dividend = 32'h000000000;
+    address_load = 32'h000000000;
+    
     case (insn_opcode)
       OpLui: begin
         // TODO: start here by implementing lui
@@ -231,8 +237,13 @@ module DatapathSingleCycle (
       end
       OpAuipc: begin
         we_signal = 1'b1;
-        rd_data_signal = pcCurrent + {imm_u, 12'h0};     //pc + (imm20 << 12)
+        rd_data_signal = pcCurrent + {imm_u[19:0], 12'h000};     
       end
+
+      OpMiscMem: begin
+      
+      end
+
       default: begin
         illegal_insn = 1'b1;
       end
@@ -351,7 +362,7 @@ module DatapathSingleCycle (
           endcase
           we_signal = 1'b1;
         end 
-    else if (insn_lh) begin     
+    if (insn_lh) begin     
           address_load = rs1 + imm_i_sext;
 
           case (address_load[1])       
@@ -360,13 +371,13 @@ module DatapathSingleCycle (
           endcase
           we_signal = 1'b1;
         end 
-    else if (insn_lw) begin     
+    if (insn_lw) begin     
           address_load = rs1 + imm_i_sext;    
 
           rd_data_signal = load_data_from_dmem;   
           we_signal = 1'b1;
         end 
-    else if (insn_lbu) begin   
+    if (insn_lbu) begin   
           address_load = rs1 + imm_i_sext;
           case (address_load[1:0])    
           2'b00:  rd_data_signal = {24'b0, load_data_from_dmem[0 +: 8]};
@@ -376,7 +387,7 @@ module DatapathSingleCycle (
           endcase
           we_signal = 1'b1;
         end 
-    else if (insn_lhu) begin   
+    if (insn_lhu) begin   
           address_load = rs1 + imm_i_sext;
           case (address_load[1])      
           1'b0:  rd_data_signal = {16'b0, load_data_from_dmem[0 +: 16]};
@@ -394,7 +405,7 @@ module DatapathSingleCycle (
           2'b11: begin  store_data_to_dmem[24 +: 8] = rs2[7:0]; store_we_to_dmem = 4'b1000;  end
           endcase
         end 
-    else if (insn_sh) begin     //sh
+    if (insn_sh) begin     //sh
           address_load = rs1 + imm_s_sext;
 
           case (address_load[1])
@@ -402,7 +413,7 @@ module DatapathSingleCycle (
           1'b1:begin  store_data_to_dmem[16 +: 16] = rs2[15:0]; store_we_to_dmem = 4'b1100;  end
           endcase
         end 
-    else if (insn_sw) begin     //sw
+    if (insn_sw) begin     //sw
           address_load = rs1 + imm_s_sext;
 
           store_data_to_dmem = rs2;
@@ -420,8 +431,7 @@ module DatapathSingleCycle (
 
     if(insn_jalr )begin                    
         rd_data_signal = pcCurrent + 'd4;
-       
-        pcNext = (rs1 + imm_i_sext) & ~(32'h00000001);
+        pcNext = (rs1 + imm_i_sext) & ~1;
         we_signal = 1'b1; 
 
       end
@@ -469,6 +479,8 @@ module DatapathSingleCycle (
       halt = 1'b1;
     end
 
+    
+
     if(insn_mul) begin
      
       mul_1 = (rs1 * rs2);
@@ -477,27 +489,22 @@ module DatapathSingleCycle (
     end
 
     if(insn_mulh) begin
-      // mul_2 = ($signed(rs1) * $signed(rs2));
-      // rd_data_signal = mul_2[63:32];
-      mul_2= {{32{rs1[31]}}, rs1} * {{32{rs2[31]}}, rs2};
+      mul_2 = {{32{rs1[31]}}, rs1} * {{32{rs2[31]}}, rs2};
       rd_data_signal = mul_2[63:32];
       we_signal = 1'b1;
 
     end
 
     if(insn_mulhsu) begin
-      // mul_3 = ($signed(rs1) * $unsigned(rs2));
-      // rd_data_signal = mul_3[63:32];
       mul_3 = {{32{rs1[31]}}, rs1} * {32'b0, rs2};
       rd_data_signal = mul_3[63:32];
+          
       we_signal = 1'b1;
 
     end
 
     if(insn_mulhu) begin
-      // mul_4 = ($unsigned(rs1) * $unsigned(rs2));
-      // rd_data_signal = mul_4[63:32];
-      mul_4 = rs1 * rs2;
+      mul_4 = ($unsigned(rs1) * $unsigned(rs2));
       rd_data_signal = mul_4[63:32];
       we_signal = 1'b1;
 
@@ -527,7 +534,7 @@ module DatapathSingleCycle (
 
     end
 
-    if (insn_rem) begin
+    if (insn_remu) begin
       dividend = rs1;
       divisor = $unsigned(rs2);
       rd_data_signal = remainder;

@@ -213,6 +213,7 @@ module DatapathSingleCycle (
   logic we_signal;
   logic [63:0] mul_1,mul_2,mul_3,mul_4;
   logic [31:0] dividend, divisor,remainder,quotient;
+  logic [31:0] sign_bit, xor_mask;
 
   always_comb begin
     illegal_insn = 1'b0;
@@ -512,7 +513,9 @@ module DatapathSingleCycle (
 
     if(insn_div) begin
       dividend = rs1;
-      divisor = $signed(rs2);
+      sign_bit = {32{rs2[31]}};
+      xor_mask = rs2 ^ sign_bit;
+      divisor = xor_mask+sign_bit;
       rd_data_signal = quotient;
       we_signal = 1'b1;
 
@@ -523,12 +526,13 @@ module DatapathSingleCycle (
       divisor = $unsigned(rs2);
       rd_data_signal = quotient;
       we_signal = 1'b1;
-
     end
 
     if (insn_rem) begin
       dividend = rs1;
-      divisor = $signed(rs2);
+      sign_bit = {32{rs2[31]}};
+      xor_mask = rs2 ^ sign_bit;
+      divisor = xor_mask+sign_bit;
       rd_data_signal = remainder;
       we_signal = 1'b1;
 

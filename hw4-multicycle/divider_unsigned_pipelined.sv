@@ -14,6 +14,7 @@ module divider_unsigned_pipelined (
 
     // TODO: your code here
 
+
 endmodule
 
 //hello 
@@ -27,6 +28,11 @@ module divu_1iter (
     output wire [31:0] o_quotient
 );
 
-  // TODO: copy your code from HW2A here
 
+    wire [31:0] tem_remainder;
+    assign tem_remainder = (i_remainder<<1) | ((i_dividend >>31)& 32'h1);
+    assign o_quotient = (tem_remainder < i_divisor) ? (i_quotient<<1) : (i_quotient<<1 | 32'h1);
+    assign o_remainder = (tem_remainder < i_divisor) ? tem_remainder : (tem_remainder - i_divisor);
+    assign o_dividend = i_dividend << 1 ;
+    
 endmodule

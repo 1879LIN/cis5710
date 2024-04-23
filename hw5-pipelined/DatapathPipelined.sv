@@ -129,6 +129,7 @@ typedef struct packed {
   logic [11:0] imm_i;
   logic [`REG_SIZE] imm_i_sext;
   logic [`REG_SIZE] imm_b_sext;
+
   logic [`INSN_NAME_SIZE] insn_exe;
 } stage_execute_t;
 
@@ -192,6 +193,15 @@ module DatapathPipelined (
       .clk(clk),
       .we (write_we),
       .rst(rst)
+  );
+
+  divider_unsigned_pipelined u_divider(
+    .clk(clk),
+    .rst(rst),
+    .i_dividend  ( dividend  ),
+    .i_divisor   ( divisor   ),
+    .o_remainder ( remainder ),
+    .o_quotient  ( quotient  )
   );
 
   
@@ -383,7 +393,7 @@ module DatapathPipelined (
 
   wire d_insn_ecall = d_insn_opcode == OpEnviron && decode_state.insn[31:7] == 25'd0;
   wire d_insn_fence = d_insn_opcode == OpMiscMem;
-
+  
   logic [5:0] d_insn_exe;
   localparam bit [5:0] InsnLui = 6'd1, InsnAuipc = 6'd2, InsnJal = 6'd3, InsnJalr = 6'd4, InsnBeq = 6'd5, 
   InsnBne = 6'd6, InsnBlt = 6'd7,InsnBge = 6'd8, InsnBltu = 6'd9, InsnBgeu = 6'd10, InsnLb = 6'd11, InsnLh = 6'd12, InsnLw = 6'd13,
@@ -494,9 +504,31 @@ module DatapathPipelined (
    end
 
 
+  logic store_flag_d;
+  always_comb begin 
+    if(d_insn_exe == InsnSb || d_insn_exe == InsnSh || d_insn_exe == InsnSw ) begin 
+      store_flag_d == 1;
+    end
+    else begin
+      store_flag_d == 0;
+    end
+  end
+
+  logic fence_flag_d;
+  always_comb begin 
+    if((d_insn_exe == InsnFence)&&(store_flag_x || store_flag_m )) begin 
+      fence_flag_d = 1;
+
+    end
+    else begin 
+      fence_flag_d = 0;
+    end
+
+  end
+
   /* EXECUTE STAGE */
 
-
+  
   stage_execute_t execute_state;
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -566,7 +598,9 @@ module DatapathPipelined (
   logic [`REG_SIZE] x_rd_data, x_rs1_data, x_rs2_data;
   logic x_we;
   logic [63:0] mul_1,mul_2,mul_3,mul_4;
+  logic [31:0] dividend, divisor,remainder,quotient;
 
+  logic[31:0] address_load;
   logic [`REG_SIZE] d1,d2;
   logic branch_flag,x_halt;
   logic [`REG_SIZE] branch_pc;
@@ -615,6 +649,28 @@ module DatapathPipelined (
       d2 = writeback_state.rd_data;
     end
 
+
+    logic load_flag_x;
+    always_comb begin 
+      if(execute_state.insn_exe == InsnLb || execute_state.insn_exe == InsnLbu || execute_state.insn_exe == InsnLh || execute_state.insn_exe == InsnLhu
+      execute_state.insn_exe == InsnLw) begin 
+        load_flag_x = 1;
+      end
+      else begin 
+        load_flag_x = 0;
+        
+      end
+    end
+
+    logic store_flag_x;
+    always_comb begin 
+      if(execute_state.insn_exe == InsnSb || execute_state.insn_exe == InsnSh || execute_state.insn_exe == InsnSw ) begin 
+        store_flag_x == 1;
+      end
+      else begin
+        store_flag_x == 0;
+      end
+    end
     
 
     case (execute_state.insn_exe)
@@ -745,6 +801,102 @@ module DatapathPipelined (
         x_we = 1;
       end
 
+      InsnLb: begin  
+          x_rd = execute_state.rd;
+
+          address_load = d1 + execute_state.imm_i_sext;     
+          case (address_load[1:0])     
+            2'b00:  x_rd_data = {{24{load_data_from_dmem[7]}}, load_data_from_dmem[7:0]};
+            2'b01:  x_rd_data = {{24{load_data_from_dmem[15]}}, load_data_from_dmem[15:8]};
+            2'b10:  x_rd_data = {{24{load_data_from_dmem[23]}}, load_data_from_dmem[23:16]};
+            2'b11:  x_rd_data = {{24{load_data_from_dmem[31]}}, load_data_from_dmem[31:24]};
+          endcase
+          x_we = 1'b1;
+        end 
+      InsnLh :  begin   
+            x_rd = execute_state.rd;
+  
+            address_load = d1 + execute_state.imm_i_sext;
+
+            case (address_load[1])       
+            1'b0:  x_rd_data = {{16{load_data_from_dmem[15]}}, load_data_from_dmem[15:0]};
+            1'b1:  x_rd_data = {{16{load_data_from_dmem[31]}}, load_data_from_dmem[31:16]};
+            endcase
+            x_we = 1'b1;
+          end 
+      InsnLw :  begin     
+            address_load = d1 + execute_state.imm_i_sext;    
+
+            x_rd_data = load_data_from_dmem;   
+            x_we = 1'b1;
+          end 
+
+      InsnLbu : begin   
+            x_rd = execute_state.rd;
+
+            address_load = d1 + execute_state.imm_i_sext;
+            case (address_load[1:0])    
+            2'b00:  x_rd_data = {24'b0, load_data_from_dmem[7:0]};
+            2'b01:  x_rd_data = {24'b0, load_data_from_dmem[15:8]};
+            2'b10:  x_rd_data = {24'b0, load_data_from_dmem[23:16]};
+            2'b11:  x_rd_data = {24'b0, load_data_from_dmem[31:24]};
+            endcase
+            x_we = 1'b1;
+          end 
+      InsnLhu :  begin  
+            x_rd = execute_state.rd;
+ 
+            address_load = d1 + execute_state.imm_i_sext;
+            case (address_load[1])      
+            1'b0:  x_rd_data = {16'b0, load_data_from_dmem[15:0]};
+            1'b1:  x_rd_data = {16'b0, load_data_from_dmem[31:16]};
+            endcase
+            x_we = 1'b1;
+          end
+
+      InsnSb :  begin              //sb
+          address_load = d1 + execute_state.imm_i_sext;
+          case (address_load[1:0])
+          2'b00: begin  store_data_to_dmem[7:0] = d2[7:0]; store_we_to_dmem = 4'b0001;  end
+          2'b01: begin  store_data_to_dmem[15:8] = d2[7:0]; store_we_to_dmem = 4'b0010;  end
+          2'b10: begin  store_data_to_dmem[23:16] = d2[7:0]; store_we_to_dmem = 4'b0100;  end
+          2'b11: begin  store_data_to_dmem[31:24] = d2[7:0]; store_we_to_dmem = 4'b1000;  end
+          endcase
+        end 
+      InsnSh :   begin     //sh
+      
+          address_load = d1 + execute_state.imm_i_sext;
+          case (address_load[1])
+            1'b0:begin  store_data_to_dmem[15:0] = d2[15:0]; store_we_to_dmem = 4'b0011;  end
+            1'b1:begin  store_data_to_dmem[31:16] = d2[15:0]; store_we_to_dmem = 4'b1100;  end
+          endcase
+        end 
+      InsnSw :  begin     //sw
+          address_load = d1 + execute_state.imm_i_sext;
+          store_data_to_dmem = d2;
+          store_we_to_dmem = 4'b1111;
+        end
+
+
+
+      // InsnJal : begin 
+
+      //     x_rd = execute_state.rd;
+    
+      //     x_rd_data = execute_state.pc  + 32'd4;
+      //     branch_pc = execute_state.pc  + execute_state.imm_j_sext;
+      //     branch_flag = 1;
+      //     x_we = 1;
+      //   end
+
+      // InsnJalr :begin 
+      //     x_rd = execute_state.rd;
+  
+      //     x_rd_data = execute_state.pc + 32'd4;
+      //     branch_pc = (d1 + execute_state.imm_i_sext) & ~1;
+      //     branch_flag = 1;
+      //     x_we = 1;
+       // end
 
       InsnBeq: begin
 
@@ -830,18 +982,85 @@ module DatapathPipelined (
 
         end
 
+      InsnDiv : begin
+          
+          x_rd = execute_state.rd;
+
+          if (d1[31])
+            dividend = ~d1 + 1;
+          else
+            dividend = d1;
+          if (d2[31])
+            divisor = ~d2 + 1;
+          else
+            divisor = d2;
+
+          if ((d1[31] ~^ d2[31]) || (d2 == 'd0))
+            x_rd_data = quotient;          
+          else
+            x_rd_data = ~quotient + 'd1;
+            x_we = 1'b1;
+
+        end
+
+      InsnDivu : begin
+          x_rd = execute_state.rd;
+
+          dividend = d1;
+          divisor = $unsigned(d2);
+          x_rd_data = quotient;
+          x_we = 1'b1;
+        end
+
+      InsnRem :  begin
+          x_rd = execute_state.rd;
+
+          if (d1[31])
+            dividend = ~d1 + 1;
+          else
+            dividend = d1;
+          if (d2[31])
+            divisor = ~d2 + 1;
+          else
+            divisor = d2;
+          if (d1[31])
+            x_rd_data = ~remainder + 'd1;
+          else
+            x_rd_data = remainder;
+          x_we = 1'b1;
+
+        end
+
+      InsnRemu: begin
+          x_rd = execute_state.rd;
+
+          dividend = d1;
+          divisor = $unsigned(d2);
+          x_rd_data = remainder;
+          x_we = 1'b1;
+        end
+
+      
+
       InsnEcall: begin 
         x_halt = 1;
       end
 
       InsnFence: begin
-
+        x_we = 1'b0;
       end
 
       default: begin
 
       end
+
+
     endcase
+
+
+
+
+
   end
 
   /* MEMORY STAGE */

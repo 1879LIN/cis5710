@@ -671,6 +671,8 @@ module DatapathPipelined (
         store_flag_x == 0;
       end
     end
+
+    logic 
     
 
     case (execute_state.insn_exe)

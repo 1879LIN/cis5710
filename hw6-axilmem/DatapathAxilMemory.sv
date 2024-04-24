@@ -51,9 +51,30 @@ module RegFile (
     input logic we,
     input logic rst
 );
-  // TODO: copy your RegFile code here
+  localparam int NumRegs = 32;
+  logic [`REG_SIZE] regs[NumRegs];
+  // TODO: copy your HW3B code here
+
+    always_ff @(posedge clk) begin
+    if (rst) begin
+      // Reset all registers to 0
+      integer i;
+      for (i = 0; i < NumRegs; i = i + 1) begin
+        regs[i] <= 0;
+      end
+    end else if (we) begin
+      // Write data to register rd, if rd is not 0 (assuming register 0 is always 0)
+      if (rd != 0) regs[rd] <= rd_data;
+    end
+  end
+
+  // Continuous assignment for read ports
+  assign regs[0] = 'b0;
+  assign rs1_data = regs[rs1];
+  assign rs2_data = regs[rs2];
 
 endmodule
+
 
 /** NB: ARESETn is active-low, i.e., reset when this input is ZERO */
 interface axi_clkrst_if (
@@ -102,7 +123,8 @@ endinterface
 
 module MemoryAxiLite #(
     parameter int NUM_WORDS  = 32,
-    parameter int ADDR_WIDTH = 32,
+    
+    //parameter int ADDR_WIDTH = 32,
     parameter int DATA_WIDTH = 32
 ) (
     axi_clkrst_if axi,
@@ -115,6 +137,7 @@ module MemoryAxiLite #(
   localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
   localparam int AddrLsb = 2;
 
+ 
   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
   localparam bit [1:0] ResponseOkay = 2'b00;
   // localparam bit [1:0] ResponseSubordinateError = 2'b10;
@@ -133,7 +156,7 @@ module MemoryAxiLite #(
   end
 `endif
 
-  // TODO: changes will be needed throughout this module
+  // // TODO: changes will be needed throughout this module
 
   always_ff @(posedge axi.ACLK) begin
     if (!axi.ARESETn) begin
@@ -143,10 +166,98 @@ module MemoryAxiLite #(
       // start out ready to accept an incoming write
       data.AWREADY <= 1;
       data.WREADY <= 1;
+      
+      
+      insn.RVALID  <= 1'b0;
+      data.RVALID  <= 1'b0;
+      data.BVALID  <= 1'b0;
+      insn.RRESP   <= ResponseOkay;
+      data.RRESP   <= ResponseOkay;
+      data.BRESP   <= ResponseOkay;
+
+      
     end else begin
+      // Write Address (AW) Channel
+            if (insn.AWVALID && !insn.AWREADY) begin
+                insn.AWREADY <= 1'b1; // Accept write address
+            end else if (!insn.WVALID) begin
+                insn.AWREADY <= 1'b0; // Once AWVALID goes low, we are no longer ready
+            end
+
+            if (data.AWVALID && !data.AWREADY) begin
+                data.AWREADY <= 1'b1; // Accept write address
+            end else if (!data.WVALID) begin
+                data.AWREADY <= 1'b0; // Once AWVALID goes low, we are no longer ready
+            end
+            
+            // Write Data (W) Channel
+            if (data.WVALID && !data.WREADY) begin
+                data.WREADY <= 1'b1; // Accept write data
+            end else if (!data.AWVALID) begin
+                data.WREADY <= 1'b0; // Once WVALID goes low, we are no longer ready
+            end
+
+            if (insn.WVALID && !insn.WREADY) begin
+                insn.WREADY <= 1'b1; // Accept write data
+            end else if (!insn.AWVALID) begin
+                insn.WREADY <= 1'b0; // Once WVALID goes low, we are no longer ready
+            end
+
+            // Write Response (B) Channel
+            if (data.AWREADY && data.WREADY && data.AWVALID && data.WVALID) begin
+                mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA; // Write data to memory
+                data.AWREADY <= 1'b0;
+                data.WREADY  <= 1'b0;
+                data.BVALID  <= 1'b1; // Indicate that write is complete
+            end else if (data.BREADY && data.BVALID) begin
+                data.BVALID <= 1'b0; // Ready for another write after BREADY
+            end
+
+
+            if (insn.AWREADY && insn.WREADY && insn.AWVALID && insn.WVALID) begin
+                mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA; // Write data to memory
+                insn.AWREADY <= 1'b0;
+                insn.WREADY  <= 1'b0;
+                insn.BVALID  <= 1'b1; // Indicate that write is complete
+            end else if (insn.BREADY && insn.BVALID) begin
+                insn.BVALID <= 1'b0; // Ready for another write after BREADY
+            end
+
+            // Read Address (AR) Channel
+            if (insn.ARVALID && !insn.ARREADY) begin
+                insn.ARREADY <= 1'b1; // Accept read address
+            end else if (!insn.RREADY) begin
+                insn.ARREADY <= 1'b0; // Once RREADY goes low, we are no longer ready
+            end
+
+            if (data.ARVALID && !data.ARREADY) begin
+                data.ARREADY <= 1'b1; // Accept read address
+            end else if (!data.RREADY) begin
+                data.ARREADY <= 1'b0; // Once RREADY goes low, we are no longer ready
+            end
+
+            // Read Data (R) Channel
+            if (data.ARREADY && data.ARVALID && !data.RVALID) begin
+                data.RDATA  <= mem_array[data.ARADDR[AddrMsb:AddrLsb]]; // Read data from memory
+                data.RVALID <= 1'b1;  // Indicate that data is valid
+                data.ARREADY <= 1'b0; // No longer ready to accept read address
+            end else if (data.RREADY && data.RVALID) begin
+                data.RVALID <= 1'b0; // Ready for another read after RREADY
+            end
+
+            if (insn.ARREADY && insn.ARVALID && !insn.RVALID) begin
+                insn.RDATA  <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]]; // Read data from memory
+                insn.RVALID <= 1'b1;  // Indicate that data is valid
+                insn.ARREADY <= 1'b0; // No longer ready to accept read address
+            end else if (insn.RREADY && insn.RVALID) begin
+                insn.RVALID <= 1'b0; // Ready for another read after RREADY
+            end
 
     end
   end
+
+  // Define states for a simple pipeline
+
 
 endmodule
 

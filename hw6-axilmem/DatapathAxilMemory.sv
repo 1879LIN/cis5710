@@ -163,42 +163,53 @@ module MemoryAxiLite #(
       // start out ready to accept incoming reads
       insn.ARREADY <= 1;
       data.ARREADY <= 1;
-      // start out ready to accept an incoming write
+      insn.AWREADY <= 1;
       data.AWREADY <= 1;
+      insn.WREADY <= 1;
       data.WREADY <= 1;
-      
-      
-      insn.RVALID  <= 1'b0;
-      data.RVALID  <= 1'b0;
-      data.BVALID  <= 1'b0;
-      insn.RRESP   <= ResponseOkay;
-      data.RRESP   <= ResponseOkay;
-      data.BRESP   <= ResponseOkay;
-
+      //insn.BREADY <= 1;
+      //data.BREADY <= 1;
+      insn.RVALID <= 0;
+      data.RVALID <= 0;
+      insn.BVALID <= 0;
+      data.BVALID <= 0;
+      insn.RRESP <= ResponseOkay;
+      data.RRESP <= ResponseOkay;
+      data.BRESP <= ResponseOkay;
       
     end else begin
+
+      // for valid signal, 0 is NOT valid and 1 is valid
+      // for ready signal, 0 is NOT ready and 1 is ready
+
       // Write Address (AW) Channel
+
             if (insn.AWVALID && !insn.AWREADY) begin
                 insn.AWREADY <= 1'b1; // Accept write address
             end else if (!insn.WVALID) begin
                 insn.AWREADY <= 1'b0; // Once AWVALID goes low, we are no longer ready
             end
 
+  
             if (data.AWVALID && !data.AWREADY) begin
-                data.AWREADY <= 1'b1; // Accept write address
+                data.AWREADY <= 1'b1; 
             end else if (!data.WVALID) begin
                 data.AWREADY <= 1'b0; // Once AWVALID goes low, we are no longer ready
             end
             
             // Write Data (W) Channel
             if (data.WVALID && !data.WREADY) begin
+                data.BVALID <= 1;
                 data.WREADY <= 1'b1; // Accept write data
+                mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA; 
             end else if (!data.AWVALID) begin
                 data.WREADY <= 1'b0; // Once WVALID goes low, we are no longer ready
             end
 
             if (insn.WVALID && !insn.WREADY) begin
-                insn.WREADY <= 1'b1; // Accept write data
+                insn.BVALID <= 1;
+                insn.WREADY <= 1'b1; // 
+                mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA;
             end else if (!insn.AWVALID) begin
                 insn.WREADY <= 1'b0; // Once WVALID goes low, we are no longer ready
             end
@@ -260,6 +271,9 @@ module MemoryAxiLite #(
 
 
 endmodule
+
+
+
 
 /** This is used for testing MemoryAxiLite in simulation, since Verilator doesn't allow
 SV interfaces in top-level modules. We expose all of the AXIL signals here so that tests

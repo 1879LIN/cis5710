@@ -9,6 +9,9 @@
 // RV opcodes are 7 bits
 `define OPCODE_SIZE 6:0
 
+// size of the wire to track insn name (6 bits)
+`define INSN_NAME_SIZE 5:0
+
 `ifndef RISCV_FORMAL
 `include "../hw2b/cla.sv"
 `include "../hw3-singlecycle/RvDisassembler.sv"
@@ -75,7 +78,6 @@ module RegFile (
 
 endmodule
 
-
 /** NB: ARESETn is active-low, i.e., reset when this input is ZERO */
 interface axi_clkrst_if (
     input wire ACLK,
@@ -121,10 +123,10 @@ interface axi_if #(
   );
 endinterface
 
+
 module MemoryAxiLite #(
     parameter int NUM_WORDS  = 32,
-    
-    //parameter int ADDR_WIDTH = 32,
+    // parameter int ADDR_WIDTH = 32,
     parameter int DATA_WIDTH = 32
 ) (
     axi_clkrst_if axi,
@@ -137,7 +139,6 @@ module MemoryAxiLite #(
   localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
   localparam int AddrLsb = 2;
 
- 
   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
   localparam bit [1:0] ResponseOkay = 2'b00;
   // localparam bit [1:0] ResponseSubordinateError = 2'b10;
@@ -156,124 +157,83 @@ module MemoryAxiLite #(
   end
 `endif
 
-  // // TODO: changes will be needed throughout this module
+  // TODO: changes will be needed throughout this module
 
-  always_ff @(posedge axi.ACLK) begin
+always_ff @(posedge axi.ACLK) begin
     if (!axi.ARESETn) begin
       // start out ready to accept incoming reads
       insn.ARREADY <= 1;
       data.ARREADY <= 1;
-      insn.AWREADY <= 1;
+      // start out ready to accept an incoming write
       data.AWREADY <= 1;
-      insn.WREADY <= 1;
+      insn.AWREADY <= 1;
       data.WREADY <= 1;
-      //insn.BREADY <= 1;
-      //data.BREADY <= 1;
-      insn.RVALID <= 0;
-      data.RVALID <= 0;
-      insn.BVALID <= 0;
-      data.BVALID <= 0;
-      insn.RRESP <= ResponseOkay;
-      data.RRESP <= ResponseOkay;
-      data.BRESP <= ResponseOkay;
+      insn.WREADY <=1;
+      
+      insn.RVALID  <= 1'b0;
+      data.RVALID  <= 1'b0;
+      insn.BVALID  <= 1'b0;
+      data.BVALID  <= 1'b0;
+      insn.RRESP   <= ResponseOkay;
+      data.RRESP   <= ResponseOkay;
+      data.BRESP   <= ResponseOkay;
+      insn.BRESP   <= ResponseOkay;
       
     end else begin
+      // Write Data (W) Channel
+      if ((data.WVALID && !data.WREADY) | (!data.AWVALID)) begin
+          data.WREADY <= 1'b1; // Accept write data
+          // Once WVALID goes low, we are no longer ready
+      end
 
-      // for valid signal, 0 is NOT valid and 1 is valid
-      // for ready signal, 0 is NOT ready and 1 is ready
+      if ((insn.WVALID && !insn.WREADY) | (!insn.AWVALID)) begin
+          insn.WREADY <= 1'b1; // Accept write data
+      end // Once WVALID goes low, we are no longer ready
 
-      // Write Address (AW) Channel
+      // Write Response (B) Channel
+      if (data.AWREADY && data.WREADY && data.AWVALID && data.WVALID) begin
+          mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA; // Write data to memory
+          data.AWREADY <= 1'b1;
+          data.WREADY  <= 1'b1;
+          data.BVALID  <= 1'b1; // Indicate that write is complete
+      end else if (data.BREADY && data.BVALID) begin
+          data.BVALID <= 1'b0; // Ready for another write after BREADY
+      end
+      if (insn.AWREADY && insn.WREADY && insn.AWVALID && insn.WVALID) begin
+          mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA; // Write data to memory
+          insn.AWREADY <= 1'b1;
+          insn.WREADY  <= 1'b1;
+          insn.BVALID  <= 1'b1; // Indicate that write is complete
+      end else if (insn.BREADY && insn.BVALID) begin
+          insn.BVALID <= 1'b0; // Ready for another write after BREADY
+      end
 
-            if (insn.AWVALID && !insn.AWREADY) begin
-                insn.AWREADY <= 1'b1; // Accept write address
-            end else if (!insn.WVALID) begin
-                insn.AWREADY <= 1'b0; // Once AWVALID goes low, we are no longer ready
-            end
+      // Read Address (AR) Channel
+      if (!insn.RREADY) begin
+          insn.ARREADY <= 1'b1; // Once RREADY goes low, we are no longer ready
+      end
+      if (!data.RREADY) begin
+          data.ARREADY <= 1'b0; // Once RREADY goes low, we are no longer ready
+      end
 
-  
-            if (data.AWVALID && !data.AWREADY) begin
-                data.AWREADY <= 1'b1; 
-            end else if (!data.WVALID) begin
-                data.AWREADY <= 1'b0; // Once AWVALID goes low, we are no longer ready
-            end
-            
-            // Write Data (W) Channel
-            if (data.WVALID && !data.WREADY) begin
-                data.BVALID <= 1;
-                data.WREADY <= 1'b1; // Accept write data
-                mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA; 
-            end else if (!data.AWVALID) begin
-                data.WREADY <= 1'b0; // Once WVALID goes low, we are no longer ready
-            end
-
-            if (insn.WVALID && !insn.WREADY) begin
-                insn.BVALID <= 1;
-                insn.WREADY <= 1'b1; // 
-                mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA;
-            end else if (!insn.AWVALID) begin
-                insn.WREADY <= 1'b0; // Once WVALID goes low, we are no longer ready
-            end
-
-            // Write Response (B) Channel
-            if (data.AWREADY && data.WREADY && data.AWVALID && data.WVALID) begin
-                mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA; // Write data to memory
-                data.AWREADY <= 1'b0;
-                data.WREADY  <= 1'b0;
-                data.BVALID  <= 1'b1; // Indicate that write is complete
-            end else if (data.BREADY && data.BVALID) begin
-                data.BVALID <= 1'b0; // Ready for another write after BREADY
-            end
-
-
-            if (insn.AWREADY && insn.WREADY && insn.AWVALID && insn.WVALID) begin
-                mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA; // Write data to memory
-                insn.AWREADY <= 1'b0;
-                insn.WREADY  <= 1'b0;
-                insn.BVALID  <= 1'b1; // Indicate that write is complete
-            end else if (insn.BREADY && insn.BVALID) begin
-                insn.BVALID <= 1'b0; // Ready for another write after BREADY
-            end
-
-            // Read Address (AR) Channel
-            if (insn.ARVALID && !insn.ARREADY) begin
-                insn.ARREADY <= 1'b1; // Accept read address
-            end else if (!insn.RREADY) begin
-                insn.ARREADY <= 1'b0; // Once RREADY goes low, we are no longer ready
-            end
-
-            if (data.ARVALID && !data.ARREADY) begin
-                data.ARREADY <= 1'b1; // Accept read address
-            end else if (!data.RREADY) begin
-                data.ARREADY <= 1'b0; // Once RREADY goes low, we are no longer ready
-            end
-
-            // Read Data (R) Channel
-            if (data.ARREADY && data.ARVALID && !data.RVALID) begin
-                data.RDATA  <= mem_array[data.ARADDR[AddrMsb:AddrLsb]]; // Read data from memory
-                data.RVALID <= 1'b1;  // Indicate that data is valid
-                data.ARREADY <= 1'b0; // No longer ready to accept read address
-            end else if (data.RREADY && data.RVALID) begin
-                data.RVALID <= 1'b0; // Ready for another read after RREADY
-            end
-
-            if (insn.ARREADY && insn.ARVALID && !insn.RVALID) begin
-                insn.RDATA  <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]]; // Read data from memory
-                insn.RVALID <= 1'b1;  // Indicate that data is valid
-                insn.ARREADY <= 1'b0; // No longer ready to accept read address
-            end else if (insn.RREADY && insn.RVALID) begin
-                insn.RVALID <= 1'b0; // Ready for another read after RREADY
-            end
+      // Read Data (R) Channel
+      if(data.ARREADY && data.ARVALID && data.RREADY) begin
+        data.RVALID <= 1'b1; // Indicate that data is valid
+        data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
+      end else if (!data.ARVALID) begin
+        data.RVALID <= 0;
+      end
+      if(insn.ARREADY && insn.ARVALID && insn.RREADY) begin
+        insn.RVALID <= 1'b1;
+        insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
+      end else if (!insn.ARVALID) begin
+        insn.RVALID <= 0;
+      end
+ 
 
     end
   end
-
-  // Define states for a simple pipeline
-
-
 endmodule
-
-
-
 
 /** This is used for testing MemoryAxiLite in simulation, since Verilator doesn't allow
 SV interfaces in top-level modules. We expose all of the AXIL signals here so that tests
@@ -404,6 +364,71 @@ typedef enum {
   CYCLE_FENCE = 32
 } cycle_status_e;
 
+typedef struct packed {
+  logic [`REG_SIZE] pc;
+  // logic [`INSN_SIZE] insn;
+  cycle_status_e cycle_status;
+} stage_decode_t;
+
+/** execute state **/
+typedef struct packed {
+  logic [`REG_SIZE] pc;
+  logic [`INSN_SIZE] insn;
+  cycle_status_e cycle_status;
+
+  logic [4:0] rs1;
+  logic [4:0] rs2;
+  logic [4:0] rd;
+  logic [11:0] imm_i;
+  logic [19:0] imm_u;
+
+  logic [`REG_SIZE] imm_i_sext;
+  logic [`REG_SIZE] imm_b_sext;
+  logic [`REG_SIZE] imm_s_sext;
+  logic [`REG_SIZE] imm_j_sext;
+
+  logic [`INSN_NAME_SIZE] insn_exe;
+} stage_execute_t;
+
+/** memory state **/
+typedef struct packed {
+  logic [`REG_SIZE] pc;
+  logic [`INSN_SIZE] insn;
+  cycle_status_e cycle_status;
+
+  logic [4:0] rd;
+  logic [4:0] rs2;
+
+  logic [`REG_SIZE] rd_data;
+  logic [`REG_SIZE] rs2_data;
+  
+
+  logic [`REG_SIZE] addr_to_dmem;
+
+  logic [5:0] insn_exe;
+  logic zero_flag;
+  logic load_flag;
+  logic flip_flag;
+
+  logic we;
+  logic halt;
+} stage_memory_t;
+
+/** writeback state **/
+typedef struct packed {
+  logic [`REG_SIZE] pc;
+  logic [`INSN_SIZE] insn;
+  cycle_status_e cycle_status;
+
+  logic [4:0] rd;
+  logic [`REG_SIZE] rd_data;
+
+  logic load_flag;
+
+  logic we;
+  logic halt;
+} stage_writeback_t;
+
 module DatapathAxilMemory (
     input wire clk,
     input wire rst,
@@ -433,6 +458,1412 @@ module DatapathAxilMemory (
 );
 
   // TODO: your code here
+
+  RegFile rf (
+      .rd(writeback_state.rd),
+      .rd_data(w_rd_data),
+      .rs1(execute_state.rs1),
+      .rs1_data(x_rs1_data),
+      .rs2(execute_state.rs2),
+      .rs2_data(x_rs2_data),
+
+      .clk(clk),
+      .we (w_we),
+      .rst(rst)
+  );
+
+  // cycle counter, not really part of any stage but useful for orienting within GtkWave
+  // do not rename this as the testbench uses this value
+  // DON'T TOUCH THIS
+  logic [`REG_SIZE] cycles_current;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      cycles_current <= 0;
+    end else begin
+      cycles_current <= cycles_current + 1;
+    end
+  end
+
+  /***************/
+  /* FETCH STAGE */
+  /***************/
+
+  logic [`REG_SIZE] f_pc_current;
+  logic [`REG_SIZE] f_insn;
+  cycle_status_e f_cycle_status;
+
+  // program counter
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      f_pc_current   <= 32'd0;
+      // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
+      f_cycle_status <= CYCLE_NO_STALL;
+    end else if (x_branching) begin
+      f_pc_current   <= x_branch_pc;
+      f_cycle_status <= CYCLE_NO_STALL;
+    end else if (x_load_stall || x_divide_to_use_stall || d_fence_stall) begin
+      f_pc_current   <= f_pc_current;
+      f_cycle_status <= CYCLE_NO_STALL;
+    end else begin
+      f_pc_current   <= f_pc_current + 4;
+      f_cycle_status <= CYCLE_NO_STALL;
+    end
+  end
+
+  always_comb begin
+    imem.ARVALID = 1;
+    imem.RREADY  = 1;
+    imem.ARADDR  = f_pc_current;
+  end
+
+ 
+  /****************/
+  /* DECODE STAGE */
+  /****************/
+
+  logic [31:0] d_insn_curr, d_insn_prev, d_insn;
+
+
+  always_comb begin
+    d_insn_curr = (decode_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 32'b0 : imem.RDATA;
+end
+
+always_comb begin
+    d_insn = (execute_state.cycle_status == CYCLE_LOAD2USE || execute_state.cycle_status == CYCLE_DIV2USE) ? d_insn_prev : d_insn_curr;
+end
+
+
+
+  // this shows how to package up state in a `struct packed`, and how to pass it between stages
+  stage_decode_t decode_state;
+  always_ff @(posedge clk) begin
+    d_insn_prev <= d_insn_curr;
+
+    if (rst) begin
+      decode_state <= '{pc: 0, cycle_status: CYCLE_RESET};
+    end else if (x_branching) begin
+      decode_state <= '{pc: 0, cycle_status: CYCLE_TAKEN_BRANCH};
+    end else if (x_load_stall || x_divide_to_use_stall || d_fence_stall) begin
+      decode_state <= '{pc: decode_state.pc, cycle_status: CYCLE_NO_STALL};
+    end else begin
+      begin
+        decode_state <= '{pc: f_pc_current, cycle_status: f_cycle_status};
+      end
+    end
+  end
+  wire [255:0] d_disasm;
+  Disasm #(
+      .PREFIX("D")
+  ) disasm_1decode (
+      .insn  (d_insn),
+      .disasm(d_disasm)
+  );
+
+  // components of the instruction
+  wire [6:0] d_insn_funct7;
+  wire [2:0] d_insn_funct3;
+  wire [4:0] d_insn_rs1;
+  wire [4:0] d_insn_rs2;
+  wire [4:0] d_insn_rd;
+  wire [`OPCODE_SIZE] d_insn_opcode;
+
+  // split R-type instruction - see section 2.2 of RiscV spec
+  assign {d_insn_funct7, d_insn_rs2, d_insn_rs1, d_insn_funct3, d_insn_rd, d_insn_opcode} = d_insn;
+
+
+  logic [4:0] d_insn_rs1_fixed;
+  logic [4:0] d_insn_rs2_fixed;
+  always_comb begin
+    if (d_insn_opcode == OpLui || d_insn_opcode == OpAuipc || d_insn_opcode == OpJal ||
+        d_insn_opcode == OpMiscMem || d_insn_opcode == OpEnviron) begin
+        d_insn_rs1_fixed = 0;
+        d_insn_rs2_fixed = 0;
+    end else if (d_insn_opcode == OpJalr || d_insn_opcode == OpLoad || d_insn_opcode == OpRegImm) begin
+        d_insn_rs1_fixed = d_insn_rs1;
+        d_insn_rs2_fixed = 0;
+    end else begin
+        d_insn_rs1_fixed = d_insn_rs1;
+        d_insn_rs2_fixed = d_insn_rs2;
+    end
+end
+
+  // setup for I, S, B & J type instructions
+  // I - short immediates and loads
+  wire [11:0] d_imm_i;
+  assign d_imm_i = d_insn[31:20];
+  wire [ 4:0] d_imm_shamt = d_insn[24:20];
+
+
+  // S - stores
+  wire [11:0] d_imm_s;
+  assign d_imm_s[11:5] = d_insn_funct7, d_imm_s[4:0] = d_insn_rd;
+
+  // B - conditionals
+  wire [12:0] d_imm_b;
+  assign {d_imm_b[12], d_imm_b[10:5]} = d_insn_funct7,
+      {d_imm_b[4:1], d_imm_b[11]} = d_insn_rd,
+      d_imm_b[0] = 1'b0;
+
+  // J - unconditional jumps
+  wire [20:0] d_imm_j;
+  assign {d_imm_j[20], d_imm_j[10:1], d_imm_j[11], d_imm_j[19:12], d_imm_j[0]} = {
+    d_insn[31:12], 1'b0
+  };
+
+  // U - setup for U type instructions
+  wire [19:0] d_imm_u;
+  assign d_imm_u = d_insn[31:12];
+
+  wire [`REG_SIZE] d_imm_i_sext = {{20{d_imm_i[11]}}, d_imm_i[11:0]};
+  wire [`REG_SIZE] d_imm_s_sext = {{20{d_imm_s[11]}}, d_imm_s[11:0]};
+  wire [`REG_SIZE] d_imm_b_sext = {{19{d_imm_b[12]}}, d_imm_b[12:0]};
+  wire [`REG_SIZE] d_imm_j_sext = {{11{d_imm_j[20]}}, d_imm_j[20:0]};
+
+  // opcodes - see section 19 of RiscV spec
+  localparam bit [`OPCODE_SIZE] OpLoad = 7'b00_000_11;
+  localparam bit [`OPCODE_SIZE] OpStore = 7'b01_000_11;
+  localparam bit [`OPCODE_SIZE] OpBranch = 7'b11_000_11;
+  localparam bit [`OPCODE_SIZE] OpJalr = 7'b11_001_11;
+  localparam bit [`OPCODE_SIZE] OpMiscMem = 7'b00_011_11;
+  localparam bit [`OPCODE_SIZE] OpJal = 7'b11_011_11;
+
+  localparam bit [`OPCODE_SIZE] OpRegImm = 7'b00_100_11;
+  localparam bit [`OPCODE_SIZE] OpRegReg = 7'b01_100_11;
+  localparam bit [`OPCODE_SIZE] OpEnviron = 7'b11_100_11;
+
+  localparam bit [`OPCODE_SIZE] OpAuipc = 7'b00_101_11;
+  localparam bit [`OPCODE_SIZE] OpLui = 7'b01_101_11;
+
+  wire d_insn_lui = d_insn_opcode == OpLui;
+  wire d_insn_auipc = d_insn_opcode == OpAuipc;
+  wire d_insn_jal = d_insn_opcode == OpJal;
+  wire d_insn_jalr = d_insn_opcode == OpJalr;
+
+  wire d_insn_beq = d_insn_opcode == OpBranch && d_insn[14:12] == 3'b000;
+  wire d_insn_bne = d_insn_opcode == OpBranch && d_insn[14:12] == 3'b001;
+  wire d_insn_blt = d_insn_opcode == OpBranch && d_insn[14:12] == 3'b100;
+  wire d_insn_bge = d_insn_opcode == OpBranch && d_insn[14:12] == 3'b101;
+  wire d_insn_bltu = d_insn_opcode == OpBranch && d_insn[14:12] == 3'b110;
+  wire d_insn_bgeu = d_insn_opcode == OpBranch && d_insn[14:12] == 3'b111;
+
+  wire d_insn_lb = d_insn_opcode == OpLoad && d_insn[14:12] == 3'b000;
+  wire d_insn_lh = d_insn_opcode == OpLoad && d_insn[14:12] == 3'b001;
+  wire d_insn_lw = d_insn_opcode == OpLoad && d_insn[14:12] == 3'b010;
+  wire d_insn_lbu = d_insn_opcode == OpLoad && d_insn[14:12] == 3'b100;
+  wire d_insn_lhu = d_insn_opcode == OpLoad && d_insn[14:12] == 3'b101;
+
+  wire d_insn_sb = d_insn_opcode == OpStore && d_insn[14:12] == 3'b000;
+  wire d_insn_sh = d_insn_opcode == OpStore && d_insn[14:12] == 3'b001;
+  wire d_insn_sw = d_insn_opcode == OpStore && d_insn[14:12] == 3'b010;
+
+  wire d_insn_addi = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b000;
+  wire d_insn_slti = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b010;
+  wire d_insn_sltiu = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b011;
+  wire d_insn_xori = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b100;
+  wire d_insn_ori = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b110;
+  wire d_insn_andi = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b111;
+
+  wire d_insn_slli = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b001 && d_insn[31:25] == 7'd0;
+  wire d_insn_srli = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b101 && d_insn[31:25] == 7'd0;
+  wire d_insn_srai = d_insn_opcode == OpRegImm && d_insn[14:12] == 3'b101 && d_insn[31:25] == 7'b0100000;
+
+  wire d_insn_add = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b000 && d_insn[31:25] == 7'd0;
+  wire d_insn_sub  = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b000 && d_insn[31:25] == 7'b0100000;
+  wire d_insn_sll = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b001 && d_insn[31:25] == 7'd0;
+  wire d_insn_slt = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b010 && d_insn[31:25] == 7'd0;
+  wire d_insn_sltu = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b011 && d_insn[31:25] == 7'd0;
+  wire d_insn_xor = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b100 && d_insn[31:25] == 7'd0;
+  wire d_insn_srl = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b101 && d_insn[31:25] == 7'd0;
+  wire d_insn_sra  = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b101 && d_insn[31:25] == 7'b0100000;
+  wire d_insn_or = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b110 && d_insn[31:25] == 7'd0;
+  wire d_insn_and = d_insn_opcode == OpRegReg && d_insn[14:12] == 3'b111 && d_insn[31:25] == 7'd0;
+
+  wire d_insn_mul = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b000;
+  wire d_insn_mulh = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b001;
+  wire d_insn_mulhsu = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b010;
+  wire d_insn_mulhu = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b011;
+  wire d_insn_div = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b100;
+  wire d_insn_divu = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b101;
+  wire d_insn_rem = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b110;
+  wire d_insn_remu = d_insn_opcode == OpRegReg && d_insn[31:25] == 7'd1 && d_insn[14:12] == 3'b111;
+
+  wire d_insn_ecall = d_insn_opcode == OpEnviron && d_insn[31:7] == 25'd0;
+  wire d_insn_fence = d_insn_opcode == OpMiscMem;
+
+  logic [5:0] d_insn_exe;
+  localparam bit [5:0] InsnLui = 6'd1, InsnAuipc = 6'd2, InsnJal = 6'd3, InsnJalr = 6'd4, InsnBeq = 6'd5, 
+  InsnBne = 6'd6, InsnBlt = 6'd7,InsnBge = 6'd8, InsnBltu = 6'd9, InsnBgeu = 6'd10, InsnLb = 6'd11, InsnLh = 6'd12, InsnLw = 6'd13,
+  InsnLbu = 6'd14, InsnLhu = 6'd15, InsnSb = 6'd16, InsnSh = 6'd17, InsnSw = 6'd18, InsnAddi = 6'd19, InsnSlti = 6'd20,
+  InsnSltiu = 6'd21, InsnXori = 6'd22, InsnOri = 6'd23, InsnAndi = 6'd24, InsnSlli = 6'd25, InsnSrli = 6'd26, InsnSrai = 6'd27,
+  InsnAdd = 6'd28, InsnSub = 6'd29, InsnSll = 6'd30, InsnSlt = 6'd31, InsnSltu = 6'd32, InsnXor = 6'd33, InsnSrl = 6'd34,
+  InsnSra = 6'd35, InsnOr = 6'd36, InsnAnd = 6'd37, InsnMul = 6'd38, InsnMulh = 6'd39, InsnMulhsu = 6'd40, InsnMulhu = 6'd41,
+  InsnDiv = 6'd42, InsnDivu = 6'd43, InsnRem = 6'd44, InsnRemu = 6'd45, InsnEcall = 6'd46, InsnFence = 6'd47;
+
+  always @(*) begin
+    if (d_insn_lui) begin
+        d_insn_exe = InsnLui;
+    end else if (d_insn_auipc) begin
+        d_insn_exe = InsnAuipc;
+    end else if (d_insn_jal) begin
+        d_insn_exe = InsnJal;
+    end else if (d_insn_jalr) begin
+        d_insn_exe = InsnJalr;
+    end else if (d_insn_beq) begin
+        d_insn_exe = InsnBeq;
+    end else if (d_insn_bne) begin
+        d_insn_exe = InsnBne;
+    end else if (d_insn_blt) begin
+        d_insn_exe = InsnBlt;
+    end else if (d_insn_bge) begin
+        d_insn_exe = InsnBge;
+    end else if (d_insn_bltu) begin
+        d_insn_exe = InsnBltu;
+    end else if (d_insn_bgeu) begin
+        d_insn_exe = InsnBgeu;
+    end else if (d_insn_lb) begin
+        d_insn_exe = InsnLb;
+    end else if (d_insn_lh) begin
+        d_insn_exe = InsnLh;
+    end else if (d_insn_lw) begin
+        d_insn_exe = InsnLw;
+    end else if (d_insn_lbu) begin
+        d_insn_exe = InsnLbu;
+    end else if (d_insn_lhu) begin
+        d_insn_exe = InsnLhu;
+    end else if (d_insn_sb) begin
+        d_insn_exe = InsnSb;
+    end else if (d_insn_sh) begin
+        d_insn_exe = InsnSh;
+    end else if (d_insn_sw) begin
+        d_insn_exe = InsnSw;
+    end else if (d_insn_addi) begin
+        d_insn_exe = InsnAddi;
+    end else if (d_insn_slti) begin
+        d_insn_exe = InsnSlti;
+    end else if (d_insn_sltiu) begin
+        d_insn_exe = InsnSltiu;
+    end else if (d_insn_xori) begin
+        d_insn_exe = InsnXori;
+    end else if (d_insn_ori) begin
+        d_insn_exe = InsnOri;
+    end else if (d_insn_andi) begin
+        d_insn_exe = InsnAndi;
+    end else if (d_insn_slli) begin
+        d_insn_exe = InsnSlli;
+    end else if (d_insn_srli) begin
+        d_insn_exe = InsnSrli;
+    end else if (d_insn_srai) begin
+        d_insn_exe = InsnSrai;
+    end else if (d_insn_add) begin
+        d_insn_exe = InsnAdd;
+    end else if (d_insn_sub) begin
+        d_insn_exe = InsnSub;
+    end else if (d_insn_sll) begin
+        d_insn_exe = InsnSll;
+    end else if (d_insn_slt) begin
+        d_insn_exe = InsnSlt;
+    end else if (d_insn_sltu) begin
+        d_insn_exe = InsnSltu;
+    end else if (d_insn_xor) begin
+        d_insn_exe = InsnXor;
+    end else if (d_insn_srl) begin
+        d_insn_exe = InsnSrl;
+    end else if (d_insn_sra) begin
+        d_insn_exe = InsnSra;
+    end else if (d_insn_or) begin
+        d_insn_exe = InsnOr;
+    end  else if (d_insn_and) begin
+        d_insn_exe = InsnAnd;
+    end else if (d_insn_mul) begin
+        d_insn_exe = InsnMul;
+    end else if (d_insn_mulh) begin
+        d_insn_exe = InsnMulh;
+    end else if (d_insn_mulhsu) begin
+        d_insn_exe = InsnMulhsu;
+    end else if (d_insn_mulhu) begin
+        d_insn_exe = InsnMulhu;
+    end else if (d_insn_div) begin
+        d_insn_exe = InsnDiv;
+    end else if (d_insn_divu) begin
+        d_insn_exe = InsnDivu;
+    end else if (d_insn_rem) begin
+        d_insn_exe = InsnRem;
+    end else if (d_insn_remu) begin
+        d_insn_exe = InsnRemu;
+    end else if (d_insn_ecall) begin
+        d_insn_exe = InsnEcall;
+    end else if (d_insn_fence) begin
+        d_insn_exe = InsnFence;
+    end else begin
+        d_insn_exe = 6'b0;
+    end
+   end
+
+  logic d_save_flag;
+  always_comb begin
+    d_save_flag = (d_insn_exe == InsnSb) ||
+                  (d_insn_exe == InsnSh) ||
+                  (d_insn_exe == InsnSw);
+end
+
+
+
+
+  logic d_fence_stall;
+  always_comb begin
+    if ((d_insn_exe == InsnFence) && (x_save_flag || m_save_flag)) begin
+      d_fence_stall = 1;
+    end else begin
+      d_fence_stall = 0;
+    end
+  end
+
+  /*****************/
+  /* EXECUTE STAGE */
+  /*****************/
+
+  stage_execute_t execute_state;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      execute_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_RESET,
+
+          rs1: 0,
+          rs2: 0,
+          rd: 0,
+          imm_i : 0,
+          imm_u: 0,
+          imm_i_sext: 0,
+          imm_b_sext: 0,
+          imm_s_sext: 0,
+          imm_j_sext: 0,
+
+          insn_exe: 0
+      };
+    end else if (x_load_stall) begin
+      execute_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_LOAD2USE,
+
+          rs1: 0,
+          rs2: 0,
+          rd: 0,
+          imm_i : d_imm_i,
+          imm_u: 0,
+          imm_i_sext: 0,
+          imm_b_sext: 0,
+          imm_s_sext: 0,
+          imm_j_sext: 0,
+
+          insn_exe: 0
+      };
+    end else if (x_divide_to_use_stall) begin
+      execute_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_DIV2USE,
+
+          rs1: 0,
+          rs2: 0,
+          rd: 0,
+
+          imm_u: 0,
+          imm_i :0,
+          imm_i_sext: 0,
+          imm_b_sext: 0,
+          imm_s_sext: 0,
+          imm_j_sext: 0,
+
+          insn_exe: 0
+      };
+    end else if (x_branching) begin
+      execute_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_TAKEN_BRANCH,
+
+          rs1: 0,
+          rs2: 0,
+          rd: 0,
+
+          imm_u: 0,
+          imm_i : 0,
+          imm_i_sext: 0,
+          imm_b_sext: 0,
+          imm_s_sext: 0,
+          imm_j_sext: 0,
+
+          insn_exe: 0
+      };
+    end else begin
+      begin
+        execute_state <= '{
+            pc: decode_state.pc,
+            insn: d_insn,
+            cycle_status: decode_state.cycle_status,
+
+            rs1: d_insn_rs1,
+            rs2: d_insn_rs2,
+            rd: d_insn_rd,
+
+            imm_u: d_imm_u,
+            imm_i  : d_imm_i,
+            imm_i_sext: d_imm_i_sext,
+            imm_b_sext: d_imm_b_sext,
+            imm_s_sext: d_imm_s_sext,
+            imm_j_sext: d_imm_j_sext,
+
+            insn_exe: d_insn_exe
+        };
+      end
+    end
+  end
+  wire [255:0] x_disasm;
+  Disasm #(
+      .PREFIX("X")
+  ) disasm_2execute (
+      .insn  (execute_state.insn),
+      .disasm(x_disasm)
+  );
+
+  // TODO: the testbench requires that your register file instance is named `rf`
+
+  // // //
+  // EXECUTE: Modules Used
+  // // //
+
+  logic [4:0] x_rs1, x_rd;
+  logic [`REG_SIZE] x_rd_data, x_rs1_data, x_rs2_data;
+
+  logic x_we;
+  logic x_halt;
+
+  // For branching
+  logic [`REG_SIZE] x_branch_pc;
+  logic x_branching;
+  logic [`REG_SIZE] int_one;
+
+
+  logic [`REG_SIZE] br_d1, br_d2;
+  
+// Forwarding logic for rs1
+  assign br_d1 = (execute_state.rs1 != 0) ? (
+                            (execute_state.rs1 == memory_state.rd) ? memory_state.rd_data :
+                            (execute_state.rs1 == writeback_state.rd) ? writeback_state.rd_data :
+                            x_rs1_data
+                        ) : x_rs1_data;
+
+  // Forwarding logic for rs2
+  assign br_d2 = (execute_state.rs2 != 0) ? (
+                            (execute_state.rs2 == memory_state.rd) ? memory_state.rd_data :
+                            (execute_state.rs2 == writeback_state.rd) ? writeback_state.rd_data :
+                            x_rs2_data
+                        ) : x_rs2_data;
+
+
+
+
+
+ 
+
+
+
+  logic [`REG_SIZE] x_div_a, x_div_b;
+  logic [`REG_SIZE] m_div_iter2_remainder, m_div_iter2_quotient;
+  logic [`REG_SIZE] m_div_iter2_quotient_flipped, m_div_iter2_remainder_flipped;
+  logic x_flip_flag;
+  logic x_zero_flag;
+
+  divider_unsigned_pipelined unsigned_div (
+      .clk(clk),
+      .rst(rst),
+      .i_dividend(x_div_a),
+      .i_divisor(x_div_b),
+      .o_remainder(m_div_iter2_remainder),
+      .o_quotient(m_div_iter2_quotient)
+  );
+
+  // always_comb begin 
+  //   br_d1 = x_rs1_data;
+  //   br_d2 = x_rs2_data;
+
+  //   if((memory_state.insn[11:7] == execute_state.insn[19:15]) && memory_state.insn[11:7] != 0 && execute_state.insn[19:15]!=0 &&  x_rs1_en && mem_en) begin 
+  //     br_d1 = memory_state.rd_data;
+  //   end
+
+  //   if((memory_state.insn[11:7] == execute_state.insn[24:20]) && memory_state.insn[11:7] != 0 && execute_state.insn[24:20]!=0 &&  x_rs2_en && mem_en) begin 
+  //     br_d2 = memory_state.rd_data;
+  //   end
+
+  //   if((writeback_state.insn[11:7] == execute_state.insn[19:15]) && writeback_state.insn[11:7] != 0 && execute_state.insn[19:15]!=0 &&  x_rs1_en && write_en) begin 
+  //     br_d1 = writeback_state.rd_data;
+  //   end
+
+  //   if((writeback_state.insn[11:7] == execute_state.insn[24:20]) && writeback_state.insn[11:7] != 0 && execute_state.insn[24:20]!=0 &&  x_rs2_en && write_en) begin 
+  //     br_d2 = writeback_state.rd_data;
+  //   end
+  // end
+  logic x_load_flag;
+  always_comb begin
+    if (execute_state.insn_exe == InsnLb) begin
+      x_load_flag = 1;
+    end else if (execute_state.insn_exe == InsnLbu) begin
+      x_load_flag = 1;
+    end else if (execute_state.insn_exe == InsnLh) begin
+      x_load_flag = 1;
+    end else if (execute_state.insn_exe == InsnLhu) begin
+      x_load_flag = 1;
+    end else if (execute_state.insn_exe == InsnLw) begin
+      x_load_flag = 1;
+    end else begin
+      x_load_flag = 0;
+    end
+  end
+
+  logic x_save_flag;
+  always_comb begin
+    x_save_flag = (execute_state.insn_exe == InsnSb) ||
+                  (execute_state.insn_exe == InsnSh) ||
+                  (execute_state.insn_exe == InsnSw);
+end
+
+
+  logic x_load_stall;
+  always_comb begin
+  
+    if (x_load_flag && (execute_state.rd == d_insn_rs1_fixed) && (d_insn_rs1_fixed != 0)) begin
+      x_load_stall = 1;
+ 
+    end else if (x_load_flag && (execute_state.rd == d_insn_rs2_fixed) && (d_save_flag == 0) && (d_insn_rs2_fixed != 0)) begin
+      x_load_stall = 1;
+    end else begin
+      x_load_stall = 0;
+    end
+  end
+
+  
+  logic x_div_flag;
+  always_comb begin
+    x_div_flag = (execute_state.insn_exe == InsnDiv)  ||
+                 (execute_state.insn_exe == InsnDivu) ||
+                 (execute_state.insn_exe == InsnRem)  ||
+                 (execute_state.insn_exe == InsnRemu);
+end
+
+
+  logic x_divide_to_use_stall;
+  always_comb begin
+    if (x_div_flag && (execute_state.rd == d_insn_rs1_fixed) && (d_insn_rs1_fixed != 0)) begin
+      x_divide_to_use_stall = 1;
+    end else if (x_div_flag && (execute_state.rd == d_insn_rs2_fixed) && (d_insn_rs2_fixed != 0)) begin
+      x_divide_to_use_stall = 1;
+    end else begin
+      x_divide_to_use_stall = 0;
+    end
+  end
+
+
+
+  // CALCULATING MEMORY ADDRESS
+
+  logic [`REG_SIZE] x_unaligned_addr_to_dmem;
+  logic [`REG_SIZE] x_addr_to_dmem;
+
+  // MUL STUFF
+  logic [63:0] mul_1,mul_2,mul_3,mul_4;
+
+
+  logic [`REG_SIZE] x_jalr_int_value;
+  wire x_rs1_en = (execute_state.insn[6:0]==OpRegImm) || (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
+  wire x_rs2_en = (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
+
+  // // //
+  // EXECUTE: Logic
+  // // //
+
+  always_comb begin
+    x_rd = 0;
+    x_rd_data = 0;
+    x_we = 0;
+    x_div_a = 0;
+    x_div_b = 0;
+
+    mul_1 = 0;
+    mul_2 = 0;
+    mul_3 = 0;
+    mul_4 = 0;
+
+    int_one = 0;
+    x_zero_flag = 0;
+    x_flip_flag = 0;
+
+    x_jalr_int_value = 0;
+
+    x_halt = 0;
+
+    // Branching
+    x_branching = 0;
+    x_branch_pc = execute_state.pc;
+
+    // Loads
+    x_unaligned_addr_to_dmem = 0;
+    x_addr_to_dmem = 0;
+
+    m_div_iter2_quotient_flipped = ~m_div_iter2_quotient + 1;
+    m_div_iter2_remainder_flipped = ~m_div_iter2_remainder + 1;
+
+    // Perform arithmetic based on instruction
+    case (execute_state.insn_exe)
+
+    
+
+      InsnLui: begin
+        x_rd = execute_state.rd;
+        x_rd_data = {execute_state.imm_u, 12'b0};
+        x_we = 1;
+      end
+
+      InsnAuipc: begin
+        x_rd = execute_state.rd;
+        x_rd_data = execute_state.pc + {execute_state.imm_u, 12'b0};
+        x_we = 1;
+      end
+
+      InsnAddi: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1+execute_state.imm_i_sext;
+        x_we = 1;
+
+        
+      end
+
+      InsnSlti: begin
+        x_rd = execute_state.rd;
+        x_rd_data = $signed(br_d1) < $signed(execute_state.imm_i_sext) ? 32'h00000001 : 32'h00000000;
+        x_we = 1;
+      end
+
+      InsnSltiu: begin
+        x_rd = execute_state.rd;
+        x_rd_data = $unsigned(br_d1) < $unsigned(execute_state.imm_i_sext) ? 32'h00000001 : 32'h00000000;
+        x_we = 1;
+      end
+
+      InsnXori: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 ^ execute_state.imm_i_sext;
+        x_we = 1;
+      end
+
+      InsnOri: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 | execute_state.imm_i_sext;
+        x_we = 1;
+      end
+
+      InsnAndi: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 & execute_state.imm_i_sext;
+        x_we = 1;
+      end
+
+      InsnSlli: begin
+
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 << execute_state.imm_i[4:0];
+        x_we = 1;
+      end
+
+      InsnSrli: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 >> execute_state.imm_i[4:0];
+        x_we = 1;
+      end
+
+      InsnSrai: begin
+        x_rd = execute_state.rd;
+        x_rd_data = $signed(br_d1) >>> execute_state.imm_i[4:0];
+        x_we = 1;
+      end
+
+      InsnSltu: begin
+        x_rd = execute_state.rd;
+        x_rd_data = $unsigned(br_d1) < $unsigned(br_d2) ? 32'h00000001 : 32'h00000000;
+        x_we = 1;
+      end
+
+
+      InsnAdd: begin
+      
+
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1+br_d2;
+        x_we = 1;
+      end
+
+      InsnSub: begin
+      
+
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1-br_d2;
+        x_we = 1;
+      end
+
+      InsnAnd: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 & br_d2;
+        x_we = 1;
+      end
+
+      InsnOr: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 | br_d2;
+        x_we = 1;
+      end
+
+      InsnXor: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 ^ br_d2;
+        x_we = 1;
+      end
+
+      InsnSlt: begin
+        x_rd = execute_state.rd;
+        x_rd_data = $signed(br_d1) < $signed(br_d2) ? 32'h00000001 : 32'h00000000;
+        x_we = 1;
+      end
+
+      InsnSll: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 << br_d2[4:0];
+        x_we = 1;
+      end
+
+      InsnSrl: begin
+        x_rd = execute_state.rd;
+        x_rd_data = br_d1 >> br_d2[4:0];
+        x_we = 1;
+      end
+
+      InsnSra: begin
+        x_rd = execute_state.rd;
+        x_rd_data = $signed(br_d1) >>> br_d2[4:0];
+        x_we = 1;
+      end
+
+      InsnMul: begin
+        x_rd = execute_state.rd;
+        mul_1 = (br_d1 * br_d2);
+        x_rd_data = mul_1[31:0];
+        x_we = 1;
+      end
+
+      InsnMulh: begin
+        x_rd = execute_state.rd;
+        
+
+        mul_2 = {{32{br_d1[31]}}, br_d1} * {{32{br_d2[31]}}, br_d2};
+        x_rd_data = mul_2[63:32];
+        x_we = 1;
+      end
+
+      InsnMulhsu: begin
+        x_rd = execute_state.rd;
+       
+
+        mul_3 = {{32{br_d1[31]}}, br_d1} * {32'b0, br_d2};
+        x_rd_data = mul_3[63:32];
+
+        x_we = 1;
+      end
+
+      InsnMulhu: begin
+        x_rd = execute_state.rd;
+  
+
+        mul_4 = ($unsigned(br_d1) * $unsigned(br_d2));
+        x_rd_data = mul_4[63:32];
+        x_we = 1;
+      end
+
+      // Branch 
+
+      InsnBeq: begin
+        x_rd = 0;
+        x_rd_data = 0;
+        x_we = 0;
+
+        if (br_d1 == br_d2) begin
+          x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
+          x_branching = 1;
+        end
+      end
+
+      InsnBne: begin
+        x_rd = 0;
+        x_rd_data = 0;
+        x_we = 0;
+
+        if (br_d1 != br_d2) begin
+          x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
+          x_branching = 1;
+        end
+      end
+
+      InsnBlt: begin
+        x_rd = 0;
+        x_rd_data = 0;
+        x_we = 0;
+
+        if ($signed(br_d1) < $signed(br_d2)) begin
+          x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
+          x_branching = 1;
+        end
+      end
+
+      InsnBge: begin
+        x_rd = 0;
+        x_rd_data = 0;
+        x_we = 0;
+        if ($signed(br_d1) >= $signed(br_d2)) begin
+          x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
+          x_branching = 1;
+        end
+      end
+
+      InsnBltu: begin
+        x_rd = 0;
+        x_rd_data = 0;
+        x_we = 0;
+        if ($unsigned(br_d1) < $unsigned(br_d2)) begin
+          x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
+          x_branching = 1;
+        end
+      end
+
+      InsnBgeu: begin
+        x_rd = 0;
+        x_rd_data = 0;
+        x_we = 0;
+        if ($unsigned(br_d1) >= $unsigned(br_d2)) begin
+          x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
+          x_branching = 1;
+        end
+      end
+
+      /* JUMP INSNS */
+
+      InsnJal: begin
+        x_rd = execute_state.rd;
+        x_rd_data = execute_state.pc + 32'd4;
+        x_we = 1;
+
+        x_branch_pc = execute_state.pc + execute_state.imm_j_sext;
+        x_branching = 1;
+      end
+
+      InsnJalr: begin
+        x_rd = execute_state.rd;
+        x_rd_data = execute_state.pc + 32'd4;
+        x_we = 1;
+
+        x_jalr_int_value = (br_d1 + execute_state.imm_i_sext) & ~(32'd1);
+        x_branch_pc = {x_jalr_int_value[31:2], 2'b0};
+        x_branching = 1;
+      end
+
+      /* LOAD INSNS */
+      InsnLb: begin
+        x_rd = execute_state.rd;
+        x_we = 1;
+
+        // Set unaligned address
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
+      end
+
+      InsnLh: begin
+        x_rd = execute_state.rd;
+        x_we = 1;
+
+        // Set unaligned address
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
+      end
+
+      InsnLw: begin
+        x_rd = execute_state.rd;
+        x_we = 1;
+
+        // Set unaligned address
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
+      end
+
+      InsnLbu: begin
+        x_rd = execute_state.rd;
+        x_we = 1;
+
+        // Set unaligned address
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
+      end
+
+      InsnLhu: begin
+        x_rd = execute_state.rd;
+        x_we = 1;
+
+
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
+      end
+
+      /* SAVE INSNS */
+      InsnSb: begin
+        x_we = 0;
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_s_sext);
+      end
+
+      InsnSh: begin
+        x_we = 0;
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_s_sext);
+      end
+
+      InsnSw: begin
+        x_we = 0;
+        x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_s_sext);
+      end
+
+      /* MISC INSNS */
+      InsnFence: begin
+        x_we = 0;
+      end
+
+      InsnEcall: begin
+        x_we   = 0;
+        x_halt = 1;
+      end
+
+      InsnDiv: begin
+            x_zero_flag = (br_d2 == 0);
+            x_we = 1;
+            x_rd = execute_state.rd;
+
+            if (br_d2 == 0) begin
+                int_one = 1;
+                x_rd_data = $signed(~int_one + 1);
+            end else begin
+                x_div_a = (br_d1[31]) ? ~br_d1 + 1 : br_d1;
+                x_div_b = (br_d2[31]) ? ~br_d2 + 1 : br_d2;
+                x_flip_flag = (br_d1[31] != br_d2[31]);
+            end
+        end
+
+
+      InsnDivu: begin
+            x_zero_flag = (br_d2 == 0);
+            x_we = 1;
+            x_rd = execute_state.rd;
+
+            if (br_d2 == 0) begin
+                int_one = 1;
+                x_rd_data = $unsigned(~int_one + 1);
+            end else begin
+                x_div_a = br_d1;
+                x_div_b = br_d2;
+            end
+        end
+
+      InsnRem: begin
+            x_zero_flag = (br_d2 == 0);
+            x_we = 1;
+            x_rd = execute_state.rd;
+
+            if (br_d2 == 0) begin
+                x_rd_data = br_d1;
+            end else begin
+                x_div_a = (br_d1[31]) ? ~br_d1 + 1 : br_d1;
+                x_div_b = (br_d2[31]) ? ~br_d2 + 1 : br_d2;
+                x_flip_flag = (br_d1[31] && !br_d2[31]) || (!br_d1[31] && br_d2[31]);
+            end
+        end
+
+      InsnRemu: begin
+            x_zero_flag = (br_d2 == 0);
+            x_we = 1;
+            x_rd = execute_state.rd;
+
+            if (br_d2 == 0) begin
+                x_rd_data = br_d1;
+            end else begin
+                x_div_a = br_d1;
+                x_div_b = br_d2;
+            end
+        end
+
+      default: begin
+        x_we = 0;
+      end
+    endcase
+  end
+
+  /****************/
+  /* MEMORY STAGE */
+  /****************/
+
+  stage_memory_t memory_state;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      memory_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_RESET,
+
+          rd: 0,
+          rs2: 0,
+          rd_data: 0,
+          rs2_data: 0,
+
+          insn_exe: 0,
+          load_flag: 0,
+          zero_flag: 0,
+          flip_flag: 0,
+
+          addr_to_dmem: 0,
+
+          we: 0,
+          halt: 0
+      };
+    end else begin
+      begin
+        memory_state <= '{
+            pc: execute_state.pc,  
+            insn: execute_state.insn,
+            cycle_status: execute_state.cycle_status,
+
+            rd: x_rd,
+            rs2: execute_state.rs2,
+            rd_data: x_rd_data,
+            rs2_data: br_d2,
+
+            insn_exe: execute_state.insn_exe,
+            load_flag: x_load_flag,
+            zero_flag: x_zero_flag,
+            flip_flag: x_flip_flag,
+
+            addr_to_dmem: x_addr_to_dmem,
+
+            we: x_we,
+            halt: x_halt
+        };
+      end
+    end
+  end
+  wire [255:0] m_disasm;
+  Disasm #(
+      .PREFIX("M")
+  ) disasm_3memory (
+      .insn  (execute_state.insn),
+      .disasm(m_disasm)
+  );
+
+
+  logic [`REG_SIZE] m_rd_data;
+  logic [`REG_SIZE] m_data2;
+  logic [`REG_SIZE] m_r_addr_to_dmem;
+  logic [`REG_SIZE] m_w_addr_to_dmem;
+
+  logic m_save_flag;
+  always_comb begin
+    m_save_flag = (memory_state.insn_exe == InsnSb) ||
+                     (memory_state.insn_exe == InsnSh) ||
+                     (memory_state.insn_exe == InsnSw);
+end
+
+
+  // WM bypassing
+
+  assign m_data2 = ((memory_state.rs2 == writeback_state.rd) && writeback_state.load_flag && m_save_flag) ? writeback_state.rd_data : memory_state.rs2_data;
+
+  always_comb begin
+    m_r_addr_to_dmem = 0;
+    m_w_addr_to_dmem = 0;
+
+    dmem.WSTRB = 0;
+    dmem.WVALID = 0;
+    dmem.AWVALID = 0;
+    dmem.BREADY = 0;
+
+    case (memory_state.insn_exe)
+
+
+      InsnLb: begin
+        m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+
+        // Choose which byte of the loaded word to take
+        // We also need to sign-extend our result manually
+        case (memory_state.addr_to_dmem[1:0])
+          2'b00: begin
+            m_rd_data = {{24{dmem.RDATA[7]}}, dmem.RDATA[7:0]};
+          end
+          2'b01: begin
+            m_rd_data = {{24{dmem.RDATA[15]}}, dmem.RDATA[15:8]};
+          end
+          2'b10: begin
+            m_rd_data = {{24{dmem.RDATA[23]}}, dmem.RDATA[23:16]};
+          end
+          2'b11: begin
+            m_rd_data = {{24{dmem.RDATA[31]}}, dmem.RDATA[31:24]};
+          end
+          default: begin
+          end
+        endcase
+      end
+
+      InsnLbu: begin
+        m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+
+
+        case (memory_state.addr_to_dmem[1:0])
+          2'b00: begin
+            m_rd_data = {24'b0, dmem.RDATA[7:0]};
+          end
+          2'b01: begin
+            m_rd_data = {24'b0, dmem.RDATA[15:8]};
+          end
+          2'b10: begin
+            m_rd_data = {24'b0, dmem.RDATA[23:16]};
+          end
+          2'b11: begin
+            m_rd_data = {24'b0, dmem.RDATA[31:24]};
+          end
+          default: begin
+          end
+        endcase
+      end
+
+      InsnLh: begin
+
+        if (memory_state.addr_to_dmem[0] == 0) begin
+          m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+
+          case (memory_state.addr_to_dmem[1])
+            1'b0: begin
+              m_rd_data = {{16{dmem.RDATA[15]}}, dmem.RDATA[15:0]};
+            end
+            1'b1: begin
+              m_rd_data = {{16{dmem.RDATA[31]}}, dmem.RDATA[31:16]};
+            end
+            default: begin
+            end
+          endcase
+        end
+      end
+
+      InsnLhu: begin
+
+        if (memory_state.addr_to_dmem[0] == 0) begin
+          m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+
+          case (memory_state.addr_to_dmem[1])
+            1'b0: begin
+              m_rd_data = {16'b0, dmem.RDATA[15:0]};
+            end
+            1'b1: begin
+              m_rd_data = {16'b0, dmem.RDATA[31:16]};
+            end
+            default: begin
+            end
+          endcase
+        end
+      end
+
+      InsnLw: begin
+        if (memory_state.addr_to_dmem[1:0] == 2'b0) begin
+          m_rd_data = dmem.RDATA;
+          m_r_addr_to_dmem = memory_state.addr_to_dmem;
+        end
+      end
+
+      /* SAVE INSNS */
+      InsnSb: begin
+        dmem.WVALID = 1;
+        dmem.AWVALID = 1;
+        dmem.BREADY = 1;
+        m_w_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+
+        case (memory_state.addr_to_dmem[1:0])
+          2'b00: begin
+            dmem.WSTRB = 4'b0001;
+            dmem.WDATA = {24'b0, m_data2[7:0]};
+          end
+          2'b01: begin
+            dmem.WSTRB = 4'b0010;
+            dmem.WDATA = {16'b0, m_data2[7:0], 8'b0};
+          end
+          2'b10: begin
+            dmem.WSTRB = 4'b0100;
+            dmem.WDATA = {8'b0, m_data2[7:0], 16'b0};
+          end
+          2'b11: begin
+            dmem.WSTRB = 4'b1000;
+            dmem.WDATA = {m_data2[7:0], 24'b0};
+          end
+          default: begin
+          end
+        endcase
+      end
+
+      InsnSh: begin
+        dmem.WVALID  = 1;
+        dmem.AWVALID = 1;
+        dmem.BREADY  = 1;
+        if (memory_state.addr_to_dmem[0] == 0) begin
+          m_w_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+
+          case (memory_state.addr_to_dmem[1])
+            1'b0: begin
+              dmem.WSTRB = 4'b0011;
+              dmem.WDATA = {16'b0, m_data2[15:0]};
+            end
+            1'b1: begin
+              dmem.WSTRB = 4'b1100;
+              dmem.WDATA = {m_data2[15:0], 16'b0};
+            end
+            default: begin
+            end
+          endcase
+        end
+      end
+
+      InsnSw: begin
+        dmem.WVALID  = 1;
+        dmem.AWVALID = 1;
+        dmem.BREADY  = 1;
+        if (memory_state.addr_to_dmem[1:0] == 2'b0) begin
+          m_w_addr_to_dmem = memory_state.addr_to_dmem;
+          dmem.WSTRB = 4'b1111;
+          dmem.WDATA = m_data2;
+        end
+      end
+
+      InsnDiv: begin
+        if (memory_state.zero_flag == 1) begin
+          m_rd_data = memory_state.rd_data;
+        end else if (memory_state.flip_flag == 1) begin
+          m_rd_data = m_div_iter2_quotient_flipped;
+        end else begin
+          m_rd_data = m_div_iter2_quotient;
+        end
+      end
+
+      InsnDivu: begin
+        if (memory_state.zero_flag == 1) begin
+          m_rd_data = memory_state.rd_data;
+        end else begin
+          m_rd_data = m_div_iter2_quotient;
+        end
+      end
+
+      InsnRem: begin
+        if (memory_state.zero_flag == 1) begin
+          m_rd_data = memory_state.rd_data;
+        end else if (memory_state.flip_flag == 1) begin
+          m_rd_data = m_div_iter2_remainder_flipped;
+        end else begin
+          m_rd_data = m_div_iter2_remainder;
+        end
+      end
+
+      InsnRemu: begin
+        if (memory_state.zero_flag == 1) begin
+          m_rd_data = memory_state.rd_data;
+        end else begin
+          m_rd_data = m_div_iter2_remainder;
+        end
+      end
+
+      default: begin
+        m_rd_data = memory_state.rd_data;
+      end
+    endcase
+  end
+
+  // Update addr_to_dmem
+  always_comb begin
+    dmem.ARVALID = 1;
+    dmem.ARADDR  = m_r_addr_to_dmem;
+    dmem.AWADDR  = m_w_addr_to_dmem;
+  end
+
+
+  /*******************/
+  /* WRITEBACK STAGE */
+  /*******************/
+
+  stage_writeback_t writeback_state;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      writeback_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_RESET,
+
+          rd: 0,
+          rd_data: 0,
+
+          load_flag: 0,
+
+          we: memory_state.we,
+          halt: memory_state.halt
+      };
+    end else begin
+      begin
+        writeback_state <= '{
+            pc: memory_state.pc,
+            insn: memory_state.insn,
+            cycle_status: memory_state.cycle_status,
+
+            rd: memory_state.rd,
+            rd_data: m_rd_data,
+
+            load_flag: memory_state.load_flag,
+
+            we: memory_state.we,
+            halt: memory_state.halt
+        };
+      end
+    end
+  end
+  //wire write_en = (writeback_state.insn[6:0]==OpRegImm) || (writeback_state.insn[6:0]==OpRegReg) || (writeback_state.insn[6:0]==OpLui) || (writeback_state.insn[6:0]==OpJal);
+
+  wire [255:0] w_disasm;
+  Disasm #(
+      .PREFIX("W")
+  ) disasm_4writeback (
+      .insn  (memory_state.insn),
+      .disasm(w_disasm)
+  );
+
+  // Traces
+  assign trace_writeback_pc = writeback_state.pc;
+  assign trace_writeback_insn = writeback_state.insn;
+  assign trace_writeback_cycle_status = writeback_state.cycle_status;
+
+  logic w_we;
+  logic [`REG_SIZE] w_rd_data;
+
+  // Writing back to register files
+  always_comb begin
+    if (writeback_state.we == 1) begin
+      w_rd_data = writeback_state.rd_data;
+      w_we = writeback_state.we;
+    end else begin
+      w_rd_data = 0;
+      w_we = 0;
+    end
+
+   
+    halt = writeback_state.halt;
+  end
 
 endmodule
 

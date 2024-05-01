@@ -179,6 +179,10 @@ always_ff @(posedge axi.ACLK) begin
       data.BRESP   <= ResponseOkay;
       insn.BRESP   <= ResponseOkay;
       
+      // reset RDATA signal according to ED.
+      insn.RDATA <= 0;
+      data.RDATA <= 0;
+
     end else begin
       // Write Data (W) Channel
       if ((data.WVALID && !data.WREADY) | (!data.AWVALID)) begin
@@ -541,6 +545,7 @@ end
     end else if (x_branch_flag) begin
       decode_state <= '{pc: 0, cycle_status: CYCLE_TAKEN_BRANCH};
     end else if (x_load_stall || x_divide_stall_flag || d_fence_stall) begin
+     // d_insn <= imem.RDATA;
       decode_state <= '{pc: decode_state.pc, cycle_status: CYCLE_NO_STALL};
     end else begin
       begin
@@ -802,7 +807,7 @@ end
     end
    end
 
-  logic d_save_flag;
+  logic d_save_flag,d_fence_stall;
   always_comb begin
     d_save_flag = (d_insn_exe == InsnSb) ||
                   (d_insn_exe == InsnSh) ||
@@ -811,8 +816,7 @@ end
 
 
 
-
-  logic d_fence_stall;
+ 
   always_comb begin
     if ((d_insn_exe == InsnFence) && (x_save_flag || m_save_flag)) begin
       d_fence_stall = 1;
@@ -950,25 +954,7 @@ end
 
   logic [`REG_SIZE] br_d1, br_d2;
   
-// Forwarding logic for rs1
-  assign br_d1 = (execute_state.rs1 != 0) ? (
-                            (execute_state.rs1 == memory_state.rd) ? memory_state.rd_data :
-                            (execute_state.rs1 == writeback_state.rd) ? writeback_state.rd_data :
-                            x_rs1_data
-                        ) : x_rs1_data;
 
-  // Forwarding logic for rs2
-  assign br_d2 = (execute_state.rs2 != 0) ? (
-                            (execute_state.rs2 == memory_state.rd) ? memory_state.rd_data :
-                            (execute_state.rs2 == writeback_state.rd) ? writeback_state.rd_data :
-                            x_rs2_data
-                        ) : x_rs2_data;
-
-
-
-
-
- 
 
 
 
@@ -1110,7 +1096,19 @@ end
     x_unaligned_addr_to_dmem = 0;
     x_addr_to_dmem = 0;
 
-   
+    // Forwarding logic for rs1
+    br_d1 = (execute_state.rs1 != 0) ? (
+                              (execute_state.rs1 == memory_state.rd) ? memory_state.rd_data :
+                              (execute_state.rs1 == writeback_state.rd) ? writeback_state.rd_data :
+                              x_rs1_data
+                          ) : x_rs1_data;
+
+    // Forwarding logic for rs2
+    br_d2 = (execute_state.rs2 != 0) ? (
+                              (execute_state.rs2 == memory_state.rd) ? memory_state.rd_data :
+                              (execute_state.rs2 == writeback_state.rd) ? writeback_state.rd_data :
+                              x_rs2_data
+                          ) : x_rs2_data;
   
 
     // Perform arithmetic based on instruction

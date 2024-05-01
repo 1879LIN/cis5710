@@ -183,19 +183,18 @@ always_ff @(posedge axi.ACLK) begin
       // Write Data (W) Channel
       if ((data.WVALID && !data.WREADY) | (!data.AWVALID)) begin
           data.WREADY <= 1'b1; // Accept write data
-          // Once WVALID goes low, we are no longer ready
       end
 
       if ((insn.WVALID && !insn.WREADY) | (!insn.AWVALID)) begin
           insn.WREADY <= 1'b1; // Accept write data
-      end // Once WVALID goes low, we are no longer ready
+      end 
 
       // Write Response (B) Channel
       if (data.AWREADY && data.WREADY && data.AWVALID && data.WVALID) begin
-          mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA; // Write data to memory
+          mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA; 
           data.AWREADY <= 1'b1;
           data.WREADY  <= 1'b1;
-          data.BVALID  <= 1'b1; // Indicate that write is complete
+          data.BVALID  <= 1'b1; // Write is complete
       end else if (data.BREADY && data.BVALID) begin
           data.BVALID <= 1'b0; // Ready for another write after BREADY
       end
@@ -406,12 +405,10 @@ typedef struct packed {
   logic [`REG_SIZE] addr_to_dmem;
 
   logic [5:0] insn_exe;
-  logic zero_flag;
-  logic load_flag;
-  logic flip_flag;
+  logic zero_flag,load_flag,flip_flag;
+ 
 
-  logic we;
-  logic halt;
+  logic we,halt;
 } stage_memory_t;
 
 /** writeback state **/
@@ -498,10 +495,10 @@ module DatapathAxilMemory (
       f_pc_current   <= 32'd0;
       // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
       f_cycle_status <= CYCLE_NO_STALL;
-    end else if (x_branching) begin
+    end else if (x_branch_flag) begin
       f_pc_current   <= x_branch_pc;
       f_cycle_status <= CYCLE_NO_STALL;
-    end else if (x_load_stall || x_divide_to_use_stall || d_fence_stall) begin
+    end else if (x_load_stall || x_divide_stall_flag || d_fence_stall) begin
       f_pc_current   <= f_pc_current;
       f_cycle_status <= CYCLE_NO_STALL;
     end else begin
@@ -541,9 +538,9 @@ end
 
     if (rst) begin
       decode_state <= '{pc: 0, cycle_status: CYCLE_RESET};
-    end else if (x_branching) begin
+    end else if (x_branch_flag) begin
       decode_state <= '{pc: 0, cycle_status: CYCLE_TAKEN_BRANCH};
-    end else if (x_load_stall || x_divide_to_use_stall || d_fence_stall) begin
+    end else if (x_load_stall || x_divide_stall_flag || d_fence_stall) begin
       decode_state <= '{pc: decode_state.pc, cycle_status: CYCLE_NO_STALL};
     end else begin
       begin
@@ -571,21 +568,27 @@ end
   assign {d_insn_funct7, d_insn_rs2, d_insn_rs1, d_insn_funct3, d_insn_rd, d_insn_opcode} = d_insn;
 
 
-  logic [4:0] d_insn_rs1_fixed;
-  logic [4:0] d_insn_rs2_fixed;
-  always_comb begin
-    if (d_insn_opcode == OpLui || d_insn_opcode == OpAuipc || d_insn_opcode == OpJal ||
-        d_insn_opcode == OpMiscMem || d_insn_opcode == OpEnviron) begin
-        d_insn_rs1_fixed = 0;
-        d_insn_rs2_fixed = 0;
-    end else if (d_insn_opcode == OpJalr || d_insn_opcode == OpLoad || d_insn_opcode == OpRegImm) begin
-        d_insn_rs1_fixed = d_insn_rs1;
-        d_insn_rs2_fixed = 0;
-    end else begin
-        d_insn_rs1_fixed = d_insn_rs1;
-        d_insn_rs2_fixed = d_insn_rs2;
-    end
+logic [4:0] d_insn_rs1_used,d_insn_rs2_used;
+
+always_comb begin
+    // Default assignment
+    d_insn_rs1_used = d_insn_rs1;
+    d_insn_rs2_used = d_insn_rs2;
+
+    // Handle specific opcode cases where no registers or only rs1 is used
+    case (d_insn_opcode)
+        OpLui, OpAuipc, OpJal, OpMiscMem, OpEnviron: begin
+            d_insn_rs1_used = 5'd0; // Using 5'd0 for explicit 5-bit width
+            d_insn_rs2_used = 5'd0;
+        end
+        OpJalr, OpLoad, OpRegImm: begin
+            d_insn_rs1_used = d_insn_rs1;
+            d_insn_rs2_used = 5'd0;
+        end
+        default: ; // Default case already handled by initial assignment
+    endcase
 end
+
 
   // setup for I, S, B & J type instructions
   // I - short immediates and loads
@@ -860,7 +863,7 @@ end
 
           insn_exe: 0
       };
-    end else if (x_divide_to_use_stall) begin
+    end else if (x_divide_stall_flag) begin
       execute_state <= '{
           pc: 0,
           insn: 0,
@@ -879,7 +882,7 @@ end
 
           insn_exe: 0
       };
-    end else if (x_branching) begin
+    end else if (x_branch_flag) begin
       execute_state <= '{
           pc: 0,
           insn: 0,
@@ -938,13 +941,11 @@ end
   logic [4:0] x_rs1, x_rd;
   logic [`REG_SIZE] x_rd_data, x_rs1_data, x_rs2_data;
 
-  logic x_we;
-  logic x_halt;
+  logic x_we,x_halt;
 
   // For branching
-  logic [`REG_SIZE] x_branch_pc;
-  logic x_branching;
-  logic [`REG_SIZE] int_one;
+  logic [`REG_SIZE] x_branch_pc,int_one;
+  logic x_branch_flag;
 
 
   logic [`REG_SIZE] br_d1, br_d2;
@@ -972,18 +973,18 @@ end
 
 
   logic [`REG_SIZE] x_div_a, x_div_b;
-  logic [`REG_SIZE] m_div_iter2_remainder, m_div_iter2_quotient;
-  logic [`REG_SIZE] m_div_iter2_quotient_flipped, m_div_iter2_remainder_flipped;
-  logic x_flip_flag;
-  logic x_zero_flag;
+  logic [`REG_SIZE] m_remainder, m_quotient;
+  
+  
+  logic x_flip_flag,x_zero_flag,x_load_flag,x_save_flag,x_load_stall,x_div_flag,x_divide_stall_flag;
 
   divider_unsigned_pipelined unsigned_div (
       .clk(clk),
       .rst(rst),
       .i_dividend(x_div_a),
       .i_divisor(x_div_b),
-      .o_remainder(m_div_iter2_remainder),
-      .o_quotient(m_div_iter2_quotient)
+      .o_remainder(m_remainder),
+      .o_quotient(m_quotient)
   );
 
   // always_comb begin 
@@ -1006,24 +1007,17 @@ end
   //     br_d2 = writeback_state.rd_data;
   //   end
   // end
-  logic x_load_flag;
+  
   always_comb begin
-    if (execute_state.insn_exe == InsnLb) begin
-      x_load_flag = 1;
-    end else if (execute_state.insn_exe == InsnLbu) begin
-      x_load_flag = 1;
-    end else if (execute_state.insn_exe == InsnLh) begin
-      x_load_flag = 1;
-    end else if (execute_state.insn_exe == InsnLhu) begin
-      x_load_flag = 1;
-    end else if (execute_state.insn_exe == InsnLw) begin
-      x_load_flag = 1;
-    end else begin
-      x_load_flag = 0;
-    end
-  end
+    x_load_flag = (execute_state.insn_exe == InsnLb)  ||
+                  (execute_state.insn_exe == InsnLbu) ||
+                  (execute_state.insn_exe == InsnLh)  ||
+                  (execute_state.insn_exe == InsnLhu) ||
+                  (execute_state.insn_exe == InsnLw);
+end
 
-  logic x_save_flag;
+
+  
   always_comb begin
     x_save_flag = (execute_state.insn_exe == InsnSb) ||
                   (execute_state.insn_exe == InsnSh) ||
@@ -1031,21 +1025,22 @@ end
 end
 
 
-  logic x_load_stall;
-  always_comb begin
-  
-    if (x_load_flag && (execute_state.rd == d_insn_rs1_fixed) && (d_insn_rs1_fixed != 0)) begin
-      x_load_stall = 1;
- 
-    end else if (x_load_flag && (execute_state.rd == d_insn_rs2_fixed) && (d_save_flag == 0) && (d_insn_rs2_fixed != 0)) begin
-      x_load_stall = 1;
-    end else begin
-      x_load_stall = 0;
+
+
+always_comb begin
+    // Reset stall to 0 by default
+    x_load_stall = 1'b0;
+
+    // Check for conditions that trigger a load stall
+    if (x_load_flag && ((execute_state.rd == d_insn_rs1_used && d_insn_rs1_used != 0) ||
+                        (execute_state.rd == d_insn_rs2_used && d_insn_rs2_used != 0 && d_save_flag == 0))) begin
+        x_load_stall = 1'b1;
     end
-  end
+end
+
 
   
-  logic x_div_flag;
+  
   always_comb begin
     x_div_flag = (execute_state.insn_exe == InsnDiv)  ||
                  (execute_state.insn_exe == InsnDivu) ||
@@ -1054,16 +1049,19 @@ end
 end
 
 
-  logic x_divide_to_use_stall;
-  always_comb begin
-    if (x_div_flag && (execute_state.rd == d_insn_rs1_fixed) && (d_insn_rs1_fixed != 0)) begin
-      x_divide_to_use_stall = 1;
-    end else if (x_div_flag && (execute_state.rd == d_insn_rs2_fixed) && (d_insn_rs2_fixed != 0)) begin
-      x_divide_to_use_stall = 1;
-    end else begin
-      x_divide_to_use_stall = 0;
+
+
+always_comb begin
+    // Default stall to 0
+    x_divide_stall_flag = 1'b0;
+
+    // Check for conditions that trigger a divide use stall
+    if (x_div_flag && ((execute_state.rd == d_insn_rs1_used && d_insn_rs1_used != 0) ||
+                       (execute_state.rd == d_insn_rs2_used && d_insn_rs2_used != 0))) begin
+        x_divide_stall_flag = 1'b1;
     end
-  end
+end
+
 
 
 
@@ -1076,7 +1074,7 @@ end
   logic [63:0] mul_1,mul_2,mul_3,mul_4;
 
 
-  logic [`REG_SIZE] x_jalr_int_value;
+  logic [`REG_SIZE] x_jalr;
   wire x_rs1_en = (execute_state.insn[6:0]==OpRegImm) || (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
   wire x_rs2_en = (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
 
@@ -1100,20 +1098,20 @@ end
     x_zero_flag = 0;
     x_flip_flag = 0;
 
-    x_jalr_int_value = 0;
+    x_jalr = 0;
 
     x_halt = 0;
 
     // Branching
-    x_branching = 0;
+    x_branch_flag = 0;
     x_branch_pc = execute_state.pc;
 
     // Loads
     x_unaligned_addr_to_dmem = 0;
     x_addr_to_dmem = 0;
 
-    m_div_iter2_quotient_flipped = ~m_div_iter2_quotient + 1;
-    m_div_iter2_remainder_flipped = ~m_div_iter2_remainder + 1;
+   
+  
 
     // Perform arithmetic based on instruction
     case (execute_state.insn_exe)
@@ -1298,7 +1296,7 @@ end
 
         if (br_d1 == br_d2) begin
           x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
-          x_branching = 1;
+          x_branch_flag = 1;
         end
       end
 
@@ -1309,7 +1307,7 @@ end
 
         if (br_d1 != br_d2) begin
           x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
-          x_branching = 1;
+          x_branch_flag = 1;
         end
       end
 
@@ -1320,7 +1318,7 @@ end
 
         if ($signed(br_d1) < $signed(br_d2)) begin
           x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
-          x_branching = 1;
+          x_branch_flag = 1;
         end
       end
 
@@ -1330,7 +1328,7 @@ end
         x_we = 0;
         if ($signed(br_d1) >= $signed(br_d2)) begin
           x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
-          x_branching = 1;
+          x_branch_flag = 1;
         end
       end
 
@@ -1340,7 +1338,7 @@ end
         x_we = 0;
         if ($unsigned(br_d1) < $unsigned(br_d2)) begin
           x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
-          x_branching = 1;
+          x_branch_flag = 1;
         end
       end
 
@@ -1350,7 +1348,7 @@ end
         x_we = 0;
         if ($unsigned(br_d1) >= $unsigned(br_d2)) begin
           x_branch_pc = execute_state.pc + execute_state.imm_b_sext;
-          x_branching = 1;
+          x_branch_flag = 1;
         end
       end
 
@@ -1362,7 +1360,7 @@ end
         x_we = 1;
 
         x_branch_pc = execute_state.pc + execute_state.imm_j_sext;
-        x_branching = 1;
+        x_branch_flag = 1;
       end
 
       InsnJalr: begin
@@ -1370,9 +1368,9 @@ end
         x_rd_data = execute_state.pc + 32'd4;
         x_we = 1;
 
-        x_jalr_int_value = (br_d1 + execute_state.imm_i_sext) & ~(32'd1);
-        x_branch_pc = {x_jalr_int_value[31:2], 2'b0};
-        x_branching = 1;
+        x_jalr = (br_d1 + execute_state.imm_i_sext) & ~(32'd1);
+        x_branch_pc = {x_jalr[31:2], 2'b0};
+        x_branch_flag = 1;
       end
 
       /* LOAD INSNS */
@@ -1566,10 +1564,7 @@ end
   );
 
 
-  logic [`REG_SIZE] m_rd_data;
-  logic [`REG_SIZE] m_data2;
-  logic [`REG_SIZE] m_r_addr_to_dmem;
-  logic [`REG_SIZE] m_w_addr_to_dmem;
+  logic [`REG_SIZE] m_rd_data,m_data2,m_r_addr_to_dmem,m_w_addr_to_dmem;
 
   logic m_save_flag;
   always_comb begin
@@ -1579,7 +1574,6 @@ end
 end
 
 
-  // WM bypassing
 
   assign m_data2 = ((memory_state.rs2 == writeback_state.rd) && writeback_state.load_flag && m_save_flag) ? writeback_state.rd_data : memory_state.rs2_data;
 
@@ -1749,9 +1743,9 @@ end
         if (memory_state.zero_flag == 1) begin
           m_rd_data = memory_state.rd_data;
         end else if (memory_state.flip_flag == 1) begin
-          m_rd_data = m_div_iter2_quotient_flipped;
+          m_rd_data = ~m_quotient + 1;
         end else begin
-          m_rd_data = m_div_iter2_quotient;
+          m_rd_data = m_quotient;
         end
       end
 
@@ -1759,7 +1753,7 @@ end
         if (memory_state.zero_flag == 1) begin
           m_rd_data = memory_state.rd_data;
         end else begin
-          m_rd_data = m_div_iter2_quotient;
+          m_rd_data = m_quotient;
         end
       end
 
@@ -1767,9 +1761,9 @@ end
         if (memory_state.zero_flag == 1) begin
           m_rd_data = memory_state.rd_data;
         end else if (memory_state.flip_flag == 1) begin
-          m_rd_data = m_div_iter2_remainder_flipped;
+          m_rd_data = ~m_remainder + 1;
         end else begin
-          m_rd_data = m_div_iter2_remainder;
+          m_rd_data = m_remainder;
         end
       end
 
@@ -1777,7 +1771,7 @@ end
         if (memory_state.zero_flag == 1) begin
           m_rd_data = memory_state.rd_data;
         end else begin
-          m_rd_data = m_div_iter2_remainder;
+          m_rd_data = m_remainder;
         end
       end
 
@@ -1848,6 +1842,8 @@ end
   assign trace_writeback_insn = writeback_state.insn;
   assign trace_writeback_cycle_status = writeback_state.cycle_status;
 
+  assign halt = (memory_state.insn[6:0] == 7'h73) & (memory_state.insn[31:7] == 'b0);
+
   logic w_we;
   logic [`REG_SIZE] w_rd_data;
 
@@ -1860,11 +1856,8 @@ end
       w_rd_data = 0;
       w_we = 0;
     end
-
-   
-    halt = writeback_state.halt;
+    //halt = writeback_state.halt;
   end
-
 endmodule
 
 module MemorySingleCycle #(

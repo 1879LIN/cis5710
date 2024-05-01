@@ -1847,7 +1847,7 @@ end
   logic w_we;
   logic [`REG_SIZE] w_rd_data;
 
-  // Writing back to register files
+  // Writing back 
   always_comb begin
     if (writeback_state.we == 1) begin
       w_rd_data = writeback_state.rd_data;

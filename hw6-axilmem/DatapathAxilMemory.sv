@@ -1,4 +1,6 @@
 `timescale 1ns / 1ns
+//Final version
+
 
 // registers are 32 bits in RV32
 `define REG_SIZE 31:0
@@ -409,7 +411,7 @@ typedef struct packed {
   logic [`REG_SIZE] addr_to_dmem;
 
   logic [5:0] insn_exe;
-  logic zero_flag,load_flag,flip_flag;
+  logic zero_flag,load_flag,neg_flag;
  
 
   logic we,halt;
@@ -522,15 +524,15 @@ module DatapathAxilMemory (
   /* DECODE STAGE */
   /****************/
 
-  logic [31:0] d_insn_curr, d_insn_prev, d_insn;
+  logic [31:0] d_insn1, d_insn0, d_insn;
 
 
   always_comb begin
-    d_insn_curr = (decode_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 32'b0 : imem.RDATA;
+    d_insn1 = (decode_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 32'b0 : imem.RDATA;
 end
 
 always_comb begin
-    d_insn = (execute_state.cycle_status == CYCLE_LOAD2USE || execute_state.cycle_status == CYCLE_DIV2USE) ? d_insn_prev : d_insn_curr;
+    d_insn = (execute_state.cycle_status == CYCLE_LOAD2USE || execute_state.cycle_status == CYCLE_DIV2USE) ? d_insn0 : d_insn1;
 end
 
 
@@ -538,13 +540,15 @@ end
   // this shows how to package up state in a `struct packed`, and how to pass it between stages
   stage_decode_t decode_state;
   always_ff @(posedge clk) begin
-    d_insn_prev <= d_insn_curr;
+    d_insn0 <= d_insn1;
 
     if (rst) begin
       decode_state <= '{pc: 0, cycle_status: CYCLE_RESET};
     end else if (x_branch_flag) begin
       decode_state <= '{pc: 0, cycle_status: CYCLE_TAKEN_BRANCH};
-    end else if (x_load_stall || x_divide_stall_flag || d_fence_stall) begin
+    end else if (x_load_stall || 
+                x_divide_stall_flag || 
+                d_fence_stall) begin
      // d_insn <= imem.RDATA;
       decode_state <= '{pc: decode_state.pc, cycle_status: CYCLE_NO_STALL};
     end else begin
@@ -948,7 +952,7 @@ end
   logic x_we,x_halt;
 
   // For branching
-  logic [`REG_SIZE] x_branch_pc,int_one;
+  logic [`REG_SIZE] x_branch_pc;
   logic x_branch_flag;
 
 
@@ -962,7 +966,7 @@ end
   logic [`REG_SIZE] m_remainder, m_quotient;
   
   
-  logic x_flip_flag,x_zero_flag,x_load_flag,x_save_flag,x_load_stall,x_div_flag,x_divide_stall_flag;
+  logic x_neg_flag,x_zero_flag,x_load_flag,x_save_flag,x_load_stall,x_div_flag,x_divide_stall_flag;
 
   divider_unsigned_pipelined unsigned_div (
       .clk(clk),
@@ -1061,8 +1065,9 @@ end
 
 
   logic [`REG_SIZE] x_jalr;
-  wire x_rs1_en = (execute_state.insn[6:0]==OpRegImm) || (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
-  wire x_rs2_en = (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
+  //wire x_rs1_en = (execute_state.insn[6:0]==OpRegImm) || (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
+  //wire x_rs2_en = (execute_state.insn[6:0]==OpRegReg) || (execute_state.insn[6:0]==OpStore) || (execute_state.insn[6:0]==OpBranch);
+  //wire mem_en = (memory_state.insn[6:0]==OpRegImm) || (memory_state.insn[6:0]==OpRegReg) || (memory_state.insn[6:0]==OpLui) || (memory_state.insn[6:0]==OpJal);
 
   // // //
   // EXECUTE: Logic
@@ -1080,9 +1085,9 @@ end
     mul_3 = 0;
     mul_4 = 0;
 
-    int_one = 0;
+   
     x_zero_flag = 0;
-    x_flip_flag = 0;
+    x_neg_flag= 0;
 
     x_jalr = 0;
 
@@ -1096,14 +1101,12 @@ end
     x_unaligned_addr_to_dmem = 0;
     x_addr_to_dmem = 0;
 
-    // Forwarding logic for rs1
     br_d1 = (execute_state.rs1 != 0) ? (
                               (execute_state.rs1 == memory_state.rd) ? memory_state.rd_data :
                               (execute_state.rs1 == writeback_state.rd) ? writeback_state.rd_data :
                               x_rs1_data
                           ) : x_rs1_data;
 
-    // Forwarding logic for rs2
     br_d2 = (execute_state.rs2 != 0) ? (
                               (execute_state.rs2 == memory_state.rd) ? memory_state.rd_data :
                               (execute_state.rs2 == writeback_state.rd) ? writeback_state.rd_data :
@@ -1111,7 +1114,6 @@ end
                           ) : x_rs2_data;
   
 
-    // Perform arithmetic based on instruction
     case (execute_state.insn_exe)
 
     
@@ -1350,7 +1352,7 @@ end
         end
       end
 
-      /* JUMP INSNS */
+
 
       InsnJal: begin
         x_rd = execute_state.rd;
@@ -1376,7 +1378,6 @@ end
         x_rd = execute_state.rd;
         x_we = 1;
 
-        // Set unaligned address
         x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
       end
 
@@ -1384,7 +1385,6 @@ end
         x_rd = execute_state.rd;
         x_we = 1;
 
-        // Set unaligned address
         x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
       end
 
@@ -1392,7 +1392,6 @@ end
         x_rd = execute_state.rd;
         x_we = 1;
 
-        // Set unaligned address
         x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
       end
 
@@ -1400,7 +1399,6 @@ end
         x_rd = execute_state.rd;
         x_we = 1;
 
-        // Set unaligned address
         x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
       end
 
@@ -1412,7 +1410,6 @@ end
         x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_i_sext);
       end
 
-      /* SAVE INSNS */
       InsnSb: begin
         x_we = 0;
         x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_s_sext);
@@ -1428,7 +1425,6 @@ end
         x_addr_to_dmem = $signed(br_d1) + $signed(execute_state.imm_s_sext);
       end
 
-      /* MISC INSNS */
       InsnFence: begin
         x_we = 0;
       end
@@ -1444,12 +1440,12 @@ end
             x_rd = execute_state.rd;
 
             if (br_d2 == 0) begin
-                int_one = 1;
-                x_rd_data = $signed(~int_one + 1);
+
+                x_rd_data = -1;
             end else begin
                 x_div_a = (br_d1[31]) ? ~br_d1 + 1 : br_d1;
                 x_div_b = (br_d2[31]) ? ~br_d2 + 1 : br_d2;
-                x_flip_flag = (br_d1[31] != br_d2[31]);
+                x_neg_flag= (br_d1[31] != br_d2[31]);
             end
         end
 
@@ -1460,8 +1456,8 @@ end
             x_rd = execute_state.rd;
 
             if (br_d2 == 0) begin
-                int_one = 1;
-                x_rd_data = $unsigned(~int_one + 1);
+            
+                x_rd_data = $unsigned(-1);
             end else begin
                 x_div_a = br_d1;
                 x_div_b = br_d2;
@@ -1478,7 +1474,7 @@ end
             end else begin
                 x_div_a = (br_d1[31]) ? ~br_d1 + 1 : br_d1;
                 x_div_b = (br_d2[31]) ? ~br_d2 + 1 : br_d2;
-                x_flip_flag = (br_d1[31] && !br_d2[31]) || (!br_d1[31] && br_d2[31]);
+                x_neg_flag= (br_d1[31] && !br_d2[31]) || (!br_d1[31] && br_d2[31]);
             end
         end
 
@@ -1521,7 +1517,7 @@ end
           insn_exe: 0,
           load_flag: 0,
           zero_flag: 0,
-          flip_flag: 0,
+          neg_flag: 0,
 
           addr_to_dmem: 0,
 
@@ -1543,7 +1539,7 @@ end
             insn_exe: execute_state.insn_exe,
             load_flag: x_load_flag,
             zero_flag: x_zero_flag,
-            flip_flag: x_flip_flag,
+            neg_flag: x_neg_flag,
 
             addr_to_dmem: x_addr_to_dmem,
 
@@ -1562,7 +1558,7 @@ end
   );
 
 
-  logic [`REG_SIZE] m_rd_data,m_data2,m_r_addr_to_dmem,m_w_addr_to_dmem;
+  logic [`REG_SIZE] m_rd_data,m_data2,m_dmem;
 
   logic m_save_flag;
   always_comb begin
@@ -1576,8 +1572,7 @@ end
   assign m_data2 = ((memory_state.rs2 == writeback_state.rd) && writeback_state.load_flag && m_save_flag) ? writeback_state.rd_data : memory_state.rs2_data;
 
   always_comb begin
-    m_r_addr_to_dmem = 0;
-    m_w_addr_to_dmem = 0;
+    m_dmem = 0;
 
     dmem.WSTRB = 0;
     dmem.WVALID = 0;
@@ -1588,7 +1583,7 @@ end
 
 
       InsnLb: begin
-        m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+        m_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
 
         // Choose which byte of the loaded word to take
         // We also need to sign-extend our result manually
@@ -1611,7 +1606,7 @@ end
       end
 
       InsnLbu: begin
-        m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+        m_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
 
 
         case (memory_state.addr_to_dmem[1:0])
@@ -1635,7 +1630,7 @@ end
       InsnLh: begin
 
         if (memory_state.addr_to_dmem[0] == 0) begin
-          m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+          m_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
 
           case (memory_state.addr_to_dmem[1])
             1'b0: begin
@@ -1653,7 +1648,7 @@ end
       InsnLhu: begin
 
         if (memory_state.addr_to_dmem[0] == 0) begin
-          m_r_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+          m_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
 
           case (memory_state.addr_to_dmem[1])
             1'b0: begin
@@ -1671,7 +1666,7 @@ end
       InsnLw: begin
         if (memory_state.addr_to_dmem[1:0] == 2'b0) begin
           m_rd_data = dmem.RDATA;
-          m_r_addr_to_dmem = memory_state.addr_to_dmem;
+          m_dmem = memory_state.addr_to_dmem;
         end
       end
 
@@ -1680,7 +1675,7 @@ end
         dmem.WVALID = 1;
         dmem.AWVALID = 1;
         dmem.BREADY = 1;
-        m_w_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+        m_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
 
         case (memory_state.addr_to_dmem[1:0])
           2'b00: begin
@@ -1709,7 +1704,7 @@ end
         dmem.AWVALID = 1;
         dmem.BREADY  = 1;
         if (memory_state.addr_to_dmem[0] == 0) begin
-          m_w_addr_to_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
+          m_dmem = {memory_state.addr_to_dmem[31:2], 2'b0};
 
           case (memory_state.addr_to_dmem[1])
             1'b0: begin
@@ -1731,7 +1726,7 @@ end
         dmem.AWVALID = 1;
         dmem.BREADY  = 1;
         if (memory_state.addr_to_dmem[1:0] == 2'b0) begin
-          m_w_addr_to_dmem = memory_state.addr_to_dmem;
+          m_dmem = memory_state.addr_to_dmem;
           dmem.WSTRB = 4'b1111;
           dmem.WDATA = m_data2;
         end
@@ -1740,7 +1735,7 @@ end
       InsnDiv: begin
         if (memory_state.zero_flag == 1) begin
           m_rd_data = memory_state.rd_data;
-        end else if (memory_state.flip_flag == 1) begin
+        end else if (memory_state.neg_flag == 1) begin
           m_rd_data = ~m_quotient + 1;
         end else begin
           m_rd_data = m_quotient;
@@ -1758,7 +1753,7 @@ end
       InsnRem: begin
         if (memory_state.zero_flag == 1) begin
           m_rd_data = memory_state.rd_data;
-        end else if (memory_state.flip_flag == 1) begin
+        end else if (memory_state.neg_flag == 1) begin
           m_rd_data = ~m_remainder + 1;
         end else begin
           m_rd_data = m_remainder;
@@ -1782,8 +1777,8 @@ end
   // Update addr_to_dmem
   always_comb begin
     dmem.ARVALID = 1;
-    dmem.ARADDR  = m_r_addr_to_dmem;
-    dmem.AWADDR  = m_w_addr_to_dmem;
+    dmem.ARADDR  = m_dmem;
+    dmem.AWADDR  = m_dmem;
   end
 
 
